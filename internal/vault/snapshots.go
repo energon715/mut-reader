@@ -32,7 +32,7 @@ func (v *Vault) SaveSnapshot(data []byte) (snapshotID string, err error) {
 	headPath := filepath.Join(v.path, "HEAD")
 	tmpHeadPath := filepath.Join(v.path, "HEAD.tmp")
 
-	dir := filepath.Join(v.path, "snapshots", snapshotID[:2])
+	dir := filepath.Join(v.path, "snapshots")
 	err = os.MkdirAll(dir, 0700)
 	if err != nil {
 		return "", fmt.Errorf("make directory error: %v", err)
@@ -65,7 +65,7 @@ func (v *Vault) GetSnapshot(snapshotID string) ([]byte, error) {
 	if v.isLocked {
 		return nil, ErrVaultLocked
 	}
-	snapshotPath := filepath.Join(v.path, "snapshots", snapshotID[:2], snapshotID)
+	snapshotPath := filepath.Join(v.path, "snapshots", snapshotID)
 	payload, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read snapshot file: %v", err)
@@ -91,21 +91,27 @@ func (v *Vault) GetSnapshot(snapshotID string) ([]byte, error) {
 }
 
 func (v *Vault) GetLastSnapshot() ([]byte, error) {
+	snapshotID, err := v.GetHead()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get snapshotID: %w", err)
+	}
+	return v.GetSnapshot(snapshotID)
+}
+
+func (v *Vault) GetHead() (string, error) {
 	if v.isLocked {
-		return nil, ErrVaultLocked
+		return "", ErrVaultLocked
 	}
 	head, err := os.ReadFile(filepath.Join(v.path, "HEAD"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, ErrNoSnapshot
+			return "", ErrNoSnapshot
 		}
-		return nil, fmt.Errorf("read HEAD error: %v", err)
+		return "", fmt.Errorf("read HEAD error: %v", err)
 	}
-
 	snapshotID := strings.TrimSpace(string(head))
 	if snapshotID == "" {
-		return nil, ErrNoSnapshot
+		return "", ErrNoSnapshot
 	}
-
-	return v.GetSnapshot(snapshotID)
+	return snapshotID, nil
 }
