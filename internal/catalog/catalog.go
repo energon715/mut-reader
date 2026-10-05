@@ -2,7 +2,9 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"mut/internal/vault"
 	"time"
 	"uuid"
 )
@@ -32,6 +34,11 @@ type ReadingPosition struct {
 	UpdateAt time.Time `json:"updateat"`
 }
 
+type Catalog struct {
+	Vault    *vault.Vault
+	Snapshot *Snapshot
+}
+
 func (s *Snapshot) ToBytes() ([]byte, error) {
 	snapshotBytes, err := json.Marshal(s)
 	if err != nil {
@@ -40,17 +47,103 @@ func (s *Snapshot) ToBytes() ([]byte, error) {
 	return snapshotBytes, nil
 }
 
-func (s *Snapshot) SnapshotFromBytes(data []byte) (*Snapshot, error) {
+func SnapshotFromBytes(data []byte) (*Snapshot, error) {
 	var snapshot Snapshot
 	err := json.Unmarshal(data, &snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshall data: %w", err)
 	}
-	if s.Books == nil {
-		s.Books = make(map[string]Book)
+	if snapshot.Books == nil {
+		snapshot.Books = make(map[string]Book)
 	}
-	if s.Shelves == nil {
-		s.Shelves = make([]string, 0)
+	if snapshot.Shelves == nil {
+		snapshot.Shelves = make([]string, 0)
 	}
 	return &snapshot, nil
+}
+
+func Open(v *vault.Vault) (*Catalog, error) {
+	lastSnapshot, err := v.GetLastSnapshot()
+	var snapshot *Snapshot
+	if err != nil {
+		if errors.Is(err, vault.ErrNoSnapshot) {
+			snapshot = &Snapshot{Version: 0, CreatedAt: time.Now(), Books: make(map[string]Book), Shelves: make([]string, 0)}
+		} else {
+			return nil, fmt.Errorf("cannot open catalog: %w", err)
+		}
+	} else {
+		snapshot, err = SnapshotFromBytes(lastSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("create snapshot from bytes error: %w", err)
+		}
+	}
+
+	return &Catalog{Vault: v, Snapshot: snapshot}, nil
+}
+
+func (c *Catalog) AddBook(book Book) error {
+	if book.ID == uuid.Nil() {
+		book.ID = uuid.New()
+	}
+	if c.Snapshot.Books == nil {
+		c.Snapshot.Books = make(map[string]Book)
+	}
+	c.Snapshot.Books[book.ID.String()] = book
+	return nil
+}
+
+func (c *Catalog) Save() (string, error) {
+	if c.Vault == nil {
+		return "", fmt.Errorf("vault is not exists")
+	}
+	if c.Snapshot == nil {
+		return "", vault.ErrNoSnapshot
+	}
+	data, err := c.Snapshot.ToBytes()
+	if err != nil {
+		return "", fmt.Errorf("snapshot to bytes error: %w", err)
+	}
+	snapshotID, err := c.Vault.SaveSnapshot(data)
+	if err != nil {
+		return "", fmt.Errorf("cannot save snapshot: %w", err)
+	}
+	return snapshotID, nil
+}
+
+func (c *Catalog) GetBook(id uuid.UUID) (Book, error) {
+	if c.Snapshot == nil || c.Snapshot.Books == nil {
+		return Book{}, vault.ErrNoSnapshot
+	}
+
+	book, ok := c.Snapshot.Books[id.String()]
+	if !ok {
+		return Book{}, fmt.Errorf("book not found: %s", id)
+	}
+	return book, nil
+}
+
+func (c *Catalog) ListBooks() ([]Book, error) {
+	if c.Snapshot == nil {
+		return nil, vault.ErrNoSnapshot
+	}
+	if c.Snapshot.Books == nil {
+		c.Snapshot.Books = make(map[string]Book)
+	}
+	books := make([]Book, 0, len(c.Snapshot.Books))
+	for _, book := range c.Snapshot.Books {
+		books = append(books, book)
+	}
+	return books, nil
+}
+
+func (c *Catalog) DeleteBook(id uuid.UUID) error {
+	if c.Snapshot == nil || c.Snapshot.Books == nil {
+		return vault.ErrNoSnapshot
+	}
+	_, ok := c.Snapshot.Books[id.String()]
+	if !ok {
+		return fmt.Errorf("book not found: %s", id)
+	}
+	delete(c.Snapshot.Books, id.String())
+	return nil
 }
