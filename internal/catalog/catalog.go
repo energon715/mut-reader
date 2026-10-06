@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"mut/internal/vault"
+	"slices"
 	"time"
 	"uuid"
 )
@@ -145,5 +146,65 @@ func (c *Catalog) DeleteBook(id uuid.UUID) error {
 		return fmt.Errorf("book not found: %s", id)
 	}
 	delete(c.Snapshot.Books, id.String())
+	return nil
+}
+
+func (c *Catalog) AddShelf(shelf string) error {
+	if c.Snapshot == nil {
+		return vault.ErrNoSnapshot
+	}
+	if c.Snapshot.Shelves == nil {
+		c.Snapshot.Shelves = make([]string, 0)
+	}
+	if shelf == "" {
+		return fmt.Errorf("invalid or empty name of shelf")
+	}
+	if slices.Contains(c.Snapshot.Shelves, shelf) {
+		return fmt.Errorf("shelf %s already exists", shelf)
+	}
+	c.Snapshot.Shelves = append(c.Snapshot.Shelves, shelf)
+	return nil
+}
+
+func (c *Catalog) ListShelves() ([]string, error) {
+	if c.Snapshot == nil {
+		return nil, fmt.Errorf("snapshot is not exists")
+	}
+	if c.Snapshot.Shelves == nil {
+		c.Snapshot.Shelves = make([]string, 0)
+	}
+	return c.Snapshot.Shelves, nil
+}
+
+func (c *Catalog) AddBookToShelf(bookID uuid.UUID, shelf string) error {
+	book, ok := c.Snapshot.Books[bookID.String()]
+	if !ok {
+		return fmt.Errorf("book %s not found", bookID)
+	}
+	if slices.Contains(book.Shelves, shelf) {
+		return fmt.Errorf("book %s already on shelf %s", bookID, shelf)
+	}
+	if !slices.Contains(c.Snapshot.Shelves, shelf) {
+		c.Snapshot.Shelves = append(c.Snapshot.Shelves, shelf)
+	}
+	book.Shelves = append(book.Shelves, shelf)
+	c.Snapshot.Books[bookID.String()] = book
+	return nil
+}
+
+func (c *Catalog) RemoveBookFromShelf(bookID uuid.UUID, shelf string) error {
+	if c.Snapshot == nil || c.Snapshot.Books == nil {
+		return fmt.Errorf("snapshot not exists")
+	}
+	book, ok := c.Snapshot.Books[bookID.String()]
+	if !ok {
+		return fmt.Errorf("book %s not found", bookID)
+	}
+	idx := slices.Index(book.Shelves, shelf)
+	if idx == -1 {
+		return fmt.Errorf("book %s not found on shelf %s", bookID, shelf)
+	}
+	book.Shelves = slices.Delete(book.Shelves, idx, idx+1)
+	c.Snapshot.Books[bookID.String()] = book
 	return nil
 }
