@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mut/internal/vault"
 	"slices"
+	"strings"
 	"time"
 	"uuid"
 )
@@ -20,6 +21,11 @@ type Book struct {
 	FileSize      int             `json:"filesize"`
 	Position      ReadingPosition `json:"position"`
 	Shelves       []string        `json:"shelves"`
+	Sha256        string          `json:"sha256"`
+	Originalname  string          `json:"originalname"`
+	Bookmarks     []string        `json:"bookmarks"`
+	CreatedAt     time.Time       `json:"createdat"`
+	UpdatedAt     time.Time       `json:"updatedat"`
 }
 
 type Snapshot struct {
@@ -208,3 +214,104 @@ func (c *Catalog) RemoveBookFromShelf(bookID uuid.UUID, shelf string) error {
 	c.Snapshot.Books[bookID.String()] = book
 	return nil
 }
+
+func (c *Catalog) DeleteShelf(shelf string) error {
+	if c.Snapshot == nil {
+		return vault.ErrNoSnapshot
+	}
+	if !slices.Contains(c.Snapshot.Shelves, shelf) {
+		return fmt.Errorf("shelf %s not found", shelf)
+	}
+	idx := slices.Index(c.Snapshot.Shelves, shelf)
+	if idx == -1 {
+		return fmt.Errorf("shelf %s not found", shelf)
+	}
+	c.Snapshot.Shelves = slices.Delete(c.Snapshot.Shelves, idx, idx+1)
+	for _, book := range c.Snapshot.Books {
+		if slices.Contains(book.Shelves, shelf) {
+			c.RemoveBookFromShelf(book.ID, shelf)
+		}
+	}
+
+	return nil
+}
+
+func (c *Catalog) RenameShelf(oldName, newName string) error {
+	if c.Snapshot == nil {
+		return vault.ErrNoSnapshot
+	}
+	if !slices.Contains(c.Snapshot.Shelves, oldName) {
+		return fmt.Errorf("shelf %s not found", oldName)
+	}
+	if slices.Contains(c.Snapshot.Shelves, newName) {
+		return fmt.Errorf("shelf %s already exists", newName)
+	}
+	idx := slices.Index(c.Snapshot.Shelves, oldName)
+	if idx == -1 {
+		return fmt.Errorf("shelf %s not found", oldName)
+	}
+	c.Snapshot.Shelves[idx] = newName
+	for _, book := range c.Snapshot.Books {
+		if slices.Contains(book.Shelves, oldName) {
+			c.RemoveBookFromShelf(book.ID, oldName)
+			c.AddBookToShelf(book.ID, newName)
+		}
+	}
+	return nil
+}
+
+func (c *Catalog) FindByHash(hash string) (Book, error) {
+	if c.Snapshot == nil {
+		return Book{}, vault.ErrNoSnapshot
+	}
+	for _, book := range c.Snapshot.Books {
+		if book.Sha256 == hash {
+			return book, nil
+		}
+	}
+	return Book{}, nil
+}
+
+func (c *Catalog) Search(query string) []Book {
+	if c.Snapshot == nil {
+		return nil
+	}
+	books := make([]Book, 0)
+	query = strings.ToLower(query)
+	for _, book := range c.Snapshot.Books {
+		if strings.Contains(strings.ToLower(book.Title), query) || strings.Contains(strings.ToLower(book.Author), query) {
+			books = append(books, book)
+		}
+	}
+	return books
+}
+
+func (c *Catalog) ListBooksByShelf(shelf string) ([]Book, error) {
+	if c.Snapshot == nil {
+		return nil, vault.ErrNoSnapshot
+	}
+	books := make([]Book, 0)
+	for _, book := range c.Snapshot.Books {
+		if slices.Contains(book.Shelves, shelf) {
+			books = append(books, book)
+		}
+	}
+	return books, nil
+}
+
+func (c *Catalog) ListBooksWithoutShelf() []Book {
+	if c.Snapshot == nil {
+		return nil
+	}
+	books := make([]Book, 0)
+	for _, book := range c.Snapshot.Books {
+		if len(book.Shelves) == 0 {
+			books = append(books, book)
+		}
+	}
+	return books
+}
+
+// func (c *Catalog) ListBookByStatus() // TODO - implement this function
+
+// func (c *Catalog) UpdateReadingPosition(bookID uuid.UUID, progress float64, locator string) error
