@@ -260,16 +260,16 @@ func (c *Catalog) RenameShelf(oldName, newName string) error {
 	return nil
 }
 
-func (c *Catalog) FindByHash(hash string) (Book, error) {
+func (c *Catalog) FindByHash(hash string) (Book, bool, error) {
 	if c.Snapshot == nil {
-		return Book{}, vault.ErrNoSnapshot
+		return Book{}, false, vault.ErrNoSnapshot
 	}
 	for _, book := range c.Snapshot.Books {
 		if book.Sha256 == hash {
-			return book, nil
+			return book, true, nil
 		}
 	}
-	return Book{}, nil
+	return Book{}, false, nil
 }
 
 func (c *Catalog) Search(query string) []Book {
