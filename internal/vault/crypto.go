@@ -1,10 +1,13 @@
 package vault
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -88,4 +91,41 @@ func deriveEntityKey(masterkey []byte, vaultID string, kind string, EntityID str
 	}
 
 	return objectKey, nil
+}
+
+func generateRecovery() ([]byte, string, error) {
+	recoverySize := 32
+	recoveryBytes, err := generateRandomBytes(recoverySize)
+	if err != nil {
+		return nil, "", fmt.Errorf("generate random bytes error: %v", err)
+	}
+	recoveryString := base64.RawURLEncoding.EncodeToString(recoveryBytes)
+	recoveryBytesFromUser, err := ParseRecovery(recoveryString)
+
+	if err != nil {
+		return nil, "", fmt.Errorf("parsing error: %v", err)
+	}
+	if !bytes.Equal(recoveryBytes, recoveryBytesFromUser) {
+		return nil, "", fmt.Errorf("recovery code is not equal, expected equal")
+	}
+
+	return recoveryBytes, recoveryString, nil
+
+}
+
+func ParseRecovery(recoveryRaw string) ([]byte, error) {
+	if recoveryRaw == "" {
+		return nil, fmt.Errorf("recovery is empty")
+	}
+	recovery := strings.TrimSpace(recoveryRaw)
+
+	recoveryBytes, err := base64.RawURLEncoding.DecodeString(recovery)
+	if err != nil {
+		return nil, fmt.Errorf("Decode to string error: %v", err)
+	}
+
+	if len(recoveryBytes) != 32 {
+		return nil, fmt.Errorf("recovery bytes len is not 32!")
+	}
+	return recoveryBytes, nil
 }
