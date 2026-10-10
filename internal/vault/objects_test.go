@@ -14,7 +14,7 @@ func TestPutObject(t *testing.T) {
 
 	someData := []byte("some data")
 
-	v, err := CreateVault(vaultPath, password)
+	v, _, err := CreateVault(vaultPath, password)
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}

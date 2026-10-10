@@ -14,7 +14,7 @@ func setupTestVault(t *testing.T) (string, []byte, string, []string) {
 	vaultDir := filepath.Join(t.TempDir(), "test_vault")
 	password := []byte("strong-backup-password-123")
 
-	v, err := vault.CreateVault(vaultDir, password)
+	v, _, err := vault.CreateVault(vaultDir, password)
 	if err != nil {
 		t.Fatalf("CreateVault failed: %v", err)
 	}

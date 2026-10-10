@@ -12,7 +12,7 @@ func TestSaveSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
 	snapshotPath := filepath.Join(tmpDir, "snapshot_test")
 	password := []byte("kakash-kavrot")
-	v, err := CreateVault(snapshotPath, password)
+	v, _, err := CreateVault(snapshotPath, password)
 
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
