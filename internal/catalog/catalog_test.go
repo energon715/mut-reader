@@ -11,11 +11,11 @@ func TestOpen(t *testing.T) {
 	vaultPath := filepath.Join(tmpDir, "test_vaulth")
 	password := []byte("kakash-kavrot")
 
-	vault, err := vault.CreateVault(vaultPath, password)
+	v, _, err := vault.CreateVault(vaultPath, password)
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}
-	c, err := Open(vault)
+	c, err := Open(v)
 	if err != nil {
 		t.Fatalf("Open cataalog error: %v", err)
 	}
@@ -38,14 +38,14 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save catalog error: %v", err)
 	}
-	headID, err := vault.GetHead()
+	headID, err := v.GetHead()
 	if err != nil {
 		t.Fatalf("get head error: %v", err)
 	}
 	if headID != savedID {
 		t.Fatalf("head not equal saved, expected %s, got %s", savedID, headID)
 	}
-	c2, err := Open(vault)
+	c2, err := Open(v)
 	if err != nil {
 		t.Fatalf("open catalog 2 error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOpen(t *testing.T) {
 func TestShelvesDeleteAndRename(t *testing.T) {
 	tmpDir := t.TempDir()
 	vaultPath := filepath.Join(tmpDir, "vault_shelves")
-	v, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
+	v, _, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestShelvesDeleteAndRename(t *testing.T) {
 func TestSearch(t *testing.T) {
 	tmpDir := t.TempDir()
 	vaultPath := filepath.Join(tmpDir, "vault_search")
-	v, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
+	v, _, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSearch(t *testing.T) {
 func TestFindByHash(t *testing.T) {
 	tmpDir := t.TempDir()
 	vaultPath := filepath.Join(tmpDir, "vault_hash")
-	v, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
+	v, _, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestFindByHash(t *testing.T) {
 func TestListBooksByShelfAndWithoutShelf(t *testing.T) {
 	tmpDir := t.TempDir()
 	vaultPath := filepath.Join(tmpDir, "vault_shelf_lists")
-	v, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
+	v, _, err := vault.CreateVault(vaultPath, []byte("test-password-123"))
 	if err != nil {
 		t.Fatalf("create vault error: %v", err)
 	}

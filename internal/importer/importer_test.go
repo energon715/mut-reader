@@ -16,7 +16,7 @@ func createTestVaultAndCatalog(t *testing.T) (*vault.Vault, *catalog.Catalog) {
 	vaultPath := filepath.Join(tmpDir, "test_vault")
 	password := []byte("strong-password-123")
 
-	v, err := vault.CreateVault(vaultPath, password)
+	v, _, err := vault.CreateVault(vaultPath, password)
 	if err != nil {
 		t.Fatalf("CreateVault error: %v", err)
 	}
