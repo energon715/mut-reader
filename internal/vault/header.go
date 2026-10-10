@@ -8,6 +8,7 @@ type Header struct {
 	KDF              KDF       `json:"kdf"`
 	WrappedMasterKey []byte    `json:"wrapped_master_key"`
 	KeyNonce         []byte    `json:"key_nonce"`
+	Recovery         []byte    `json:"mobile_recovery"`
 }
 
 type KDF struct {
