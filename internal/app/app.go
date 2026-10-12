@@ -68,6 +68,7 @@ func (app *App) Unlock(vaulthPath string, password string) error {
 
 	app.catalog = c
 	app.vault = v
+	app.vaultPath = vaulthPath
 
 	return nil
 }
@@ -84,6 +85,7 @@ func (app *App) UnlockWithRecovery(vaulthPath string, recoveryKey string) error 
 
 	app.catalog = c
 	app.vault = v
+	app.vaultPath = vaulthPath
 
 	return nil
 }
@@ -105,4 +107,12 @@ func defaultVaultPath() string {
 	path := filepath.Join(homeDir, ".local", "share", "mut", "vault")
 
 	return path
+}
+
+func (app *App) IsUnlocked() bool {
+	if app.vault != nil && app.catalog.Vault != nil {
+		return false
+	} else {
+		return true
+	}
 }
