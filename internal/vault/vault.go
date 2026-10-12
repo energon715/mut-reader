@@ -166,6 +166,38 @@ func OpenVaultWithRecovery(vaultpath string, recoveryKey string) (*Vault, error)
 
 }
 
+func (v *Vault) ChangePassword(oldPassword, newPassword []byte) error {
+	if v.isLocked == false {
+		return fmt.Errorf("vault is open, error")
+	}
+	if v.masterKey == nil {
+		return fmt.Errorf("masterKey is not exist")
+	}
+
+	if len(newPassword) < 8 {
+		return fmt.Errorf("password length is less than 8")
+	}
+
+	wrappedKey := deriveKey(oldPassword, v.header.KDF)
+	masterKey, err := decrypt(wrappedKey, v.header.KeyNonce, v.header.WrappedMasterKey, []byte(v.header.VaultID.String()))
+	if err != nil {
+		return fmt.Errorf("decrypt master key error: %w", err)
+	}
+
+	NewKDF, err := DefaultKDF()
+	if err != nil {
+		return fmt.Errorf("generate default KDF error: %w", err)
+	}
+
+	newWrappedKey := deriveKey(newPassword, NewKDF)
+	NewKeyNonce, NewCipherText, err := encrypt(v.masterKey, masterKey, []byte(v.header.VaultID.String()))
+
+	var NewHeader Header
+
+	NewHeader{}
+
+}
+
 func (v *Vault) Lock() {
 	v.isLocked = true
 	clear(v.masterKey)
