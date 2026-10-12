@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,22 @@ import (
 	"mut/internal/importer"
 	"mut/internal/vault"
 )
+
+var inReader io.Reader = os.Stdin
+var stdinScanner *bufio.Scanner
+
+func getLineFromStdin() (string, error) {
+	if stdinScanner == nil {
+		stdinScanner = bufio.NewScanner(inReader)
+	}
+	if stdinScanner.Scan() {
+		return strings.TrimSpace(stdinScanner.Text()), nil
+	}
+	if err := stdinScanner.Err(); err != nil {
+		return "", err
+	}
+	return "", io.EOF
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -70,7 +87,7 @@ Commands:
   restore  <backup-path> <target-vault-path>   Restore a vault from an encrypted backup
   check    <vault-path>                        Check vault access (password or recovery key)
   export   <vault-path> <output-dir>           Export original unencrypted book files
-  purge    <vault-path>						   Delete ALL
+  purge    <vault-path>                        Cryptographically shred and delete the vault
 
 Options:
   -h, --help   Show this help message
@@ -81,6 +98,7 @@ Examples:
   vaultctl restore /media/backup/mut-backup ~/.local/share/mut/restored-vault
   vaultctl check ~/.local/share/mut/vault
   vaultctl export ~/.local/share/mut/vault ~/Desktop/exported-books
+  vaultctl purge ~/.local/share/mut/vault
 `
 	fmt.Print(usage)
 }
@@ -95,7 +113,7 @@ func runBackup(args []string) error {
 
 	manifest, err := backup.CreateBackup(vaultPath, backupDir)
 	if err != nil {
-		return fmt.Errorf("  Create backup error: %w", err)
+		return fmt.Errorf("create backup error: %w", err)
 	}
 
 	fmt.Printf("  Backup created successfully\n")
@@ -110,10 +128,10 @@ func runVerify(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: vaultctl verify <backup-path>")
 	}
-	bachupPAth := args[0]
-	err := backup.VerifyBackup(bachupPAth)
+	backupPath := args[0]
+	err := backup.VerifyBackup(backupPath)
 	if err != nil {
-		return fmt.Errorf("  Verify backup error: %w", err)
+		return fmt.Errorf("verify backup error: %w", err)
 	}
 	fmt.Printf("  Backup verified successfully\n")
 
@@ -128,7 +146,7 @@ func runRestore(args []string) error {
 	targetPath := args[1]
 	err := backup.RestoreBackup(backupPath, targetPath)
 	if err != nil {
-		return fmt.Errorf("  Restore backup error: %w", err)
+		return fmt.Errorf("restore backup error: %w", err)
 	}
 
 	fmt.Printf("  Backup restored successfully\n")
@@ -141,7 +159,7 @@ func runCheck(args []string) error {
 		return fmt.Errorf("usage: vaultctl check <vault-path> [--recovery]")
 	}
 
-	vaulthPath := args[0]
+	vaultPath := args[0]
 
 	var v *vault.Vault
 
@@ -149,7 +167,7 @@ func runCheck(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read recovery error: %w", err)
 	}
-	v, err = vault.OpenVaultWithRecovery(vaulthPath, recKey)
+	v, err = vault.OpenVaultWithRecovery(vaultPath, recKey)
 	if err != nil {
 		return fmt.Errorf("open vault with recovery error: %w", err)
 	}
@@ -196,6 +214,7 @@ func runExport(args []string) error {
 
 	if len(books) == 0 {
 		fmt.Println("  Catalog is empty. Nothing to export.")
+		return nil
 	}
 
 	if err := os.MkdirAll(outputDir, 0700); err != nil {
@@ -244,7 +263,7 @@ func runExport(args []string) error {
 
 func runPurge(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: vaultctl restore <vault-path> ")
+		return fmt.Errorf("usage: vaultctl purge <vault-path>")
 	}
 
 	vaultPath := args[0]
@@ -267,8 +286,7 @@ func runPurge(args []string) error {
 	fmt.Printf("\n⚠️  WARNING: This will PERMANENTLY DESTROY the vault at:\n    %s\n", vaultPath)
 	fmt.Println("TYPE 'PURGE' TO DELETE ALL!")
 
-	reader := bufio.NewReader(os.Stdin)
-	confirm, err := reader.ReadString('\n')
+	confirm, err := getLineFromStdin()
 	if err != nil || strings.TrimSpace(confirm) != "PURGE" {
 		fmt.Println("Purge aborted.")
 		return nil
@@ -306,8 +324,7 @@ func runPurge(args []string) error {
 
 func readRecoveryKey() (string, error) {
 	fmt.Print("Enter recovery key: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
+	input, err := getLineFromStdin()
 	if err != nil {
 		return "", fmt.Errorf("failed to read recovery key: %w", err)
 	}
