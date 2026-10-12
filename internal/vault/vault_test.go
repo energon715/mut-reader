@@ -205,3 +205,89 @@ func TestParseRecovery(t *testing.T) {
 		t.Fatalf("expected error for short key")
 	}
 }
+
+func TestChangePassword(t *testing.T) {
+	tmpDir := t.TempDir()
+	vaultPath := filepath.Join(tmpDir, "vault_change_password")
+	oldPassword := []byte("initial-strong-password-1")
+	newPassword := []byte("brand-new-secure-password-2")
+	wrongPassword := []byte("completely-wrong-password")
+	shortPassword := []byte("short")
+
+	v, recoveryKey, err := CreateVault(vaultPath, oldPassword)
+	if err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	testPayload := []byte("important book data")
+	objID, err := v.PutObject(testPayload)
+	if err != nil {
+		t.Fatalf("PutObject failed: %v", err)
+	}
+
+	originalMasterKey := make([]byte, len(v.masterKey))
+	copy(originalMasterKey, v.masterKey)
+
+	// 1. Ошибка при неверном старом пароле
+	err = v.ChangePassword(wrongPassword, newPassword)
+	if err == nil {
+		t.Fatalf("expected error when changing password with wrong oldPassword, got nil")
+	}
+
+	// 2. Ошибка при слишком коротком новом пароле (< 8)
+	err = v.ChangePassword(oldPassword, shortPassword)
+	if err == nil {
+		t.Fatalf("expected error when newPassword is shorter than 8 chars, got nil")
+	}
+
+	// 3. Успешная смена пароля
+	err = v.ChangePassword(oldPassword, newPassword)
+	if err != nil {
+		t.Fatalf("ChangePassword failed: %v", err)
+	}
+
+	// Мастер-ключ в открытом объекте не должен был измениться
+	if !bytes.Equal(v.masterKey, originalMasterKey) {
+		t.Fatalf("in-memory masterKey changed after ChangePassword")
+	}
+
+	// 4. Ошибка вызова ChangePassword на заблокированном сейфе
+	v.Lock()
+	err = v.ChangePassword(newPassword, []byte("another-new-password"))
+	if err != ErrVaultLocked {
+		t.Fatalf("expected ErrVaultLocked when vault is locked, got %v", err)
+	}
+
+	// 5. Старый пароль больше НЕ должен открывать сейф
+	_, err = OpenVault(vaultPath, oldPassword)
+	if err == nil {
+		t.Fatalf("vault successfully opened with oldPassword, expected failure")
+	}
+
+	// 6. Новый пароль ДОЛЖЕН успешно открывать сейф
+	vNew, err := OpenVault(vaultPath, newPassword)
+	if err != nil {
+		t.Fatalf("OpenVault with newPassword failed: %v", err)
+	}
+	if !bytes.Equal(vNew.masterKey, originalMasterKey) {
+		t.Fatalf("masterKey mismatch after opening with new password")
+	}
+
+	// Проверяем, что ранее записанный объект расшифровывается
+	readData, err := vNew.GetObject(objID)
+	if err != nil {
+		t.Fatalf("GetObject failed on vault opened with new password: %v", err)
+	}
+	if !bytes.Equal(readData, testPayload) {
+		t.Fatalf("data mismatch: got %q, want %q", string(readData), string(testPayload))
+	}
+
+	// 7. Recovery Key по-прежнему должен работать после смены пароля
+	vRecovery, err := OpenVaultWithRecovery(vaultPath, recoveryKey)
+	if err != nil {
+		t.Fatalf("OpenVaultWithRecovery failed after password change: %v", err)
+	}
+	if !bytes.Equal(vRecovery.masterKey, originalMasterKey) {
+		t.Fatalf("masterKey mismatch after opening with recovery key")
+	}
+}
