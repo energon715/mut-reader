@@ -167,8 +167,8 @@ func OpenVaultWithRecovery(vaultpath string, recoveryKey string) (*Vault, error)
 }
 
 func (v *Vault) ChangePassword(oldPassword, newPassword []byte) error {
-	if v.isLocked == false {
-		return fmt.Errorf("vault is open, error")
+	if v.isLocked != false {
+		return ErrVaultLocked
 	}
 	if v.masterKey == nil {
 		return fmt.Errorf("masterKey is not exist")
@@ -190,12 +190,32 @@ func (v *Vault) ChangePassword(oldPassword, newPassword []byte) error {
 	}
 
 	newWrappedKey := deriveKey(newPassword, NewKDF)
-	NewKeyNonce, NewCipherText, err := encrypt(v.masterKey, masterKey, []byte(v.header.VaultID.String()))
+	NewKeyNonce, NewCipherText, err := encrypt(newWrappedKey, masterKey, []byte(v.header.VaultID.String()))
+	if err != nil {
+		return fmt.Errorf("encrypt error: %v", err)
+	}
 
-	var NewHeader Header
+	v.header.KDF = NewKDF
+	v.header.KeyNonce = NewKeyNonce
+	v.header.WrappedMasterKey = NewCipherText
 
-	NewHeader{}
+	headerBytes, err := json.MarshalIndent(v.header, "", "  ")
 
+	vaultPath := filepath.Join(v.path, "vault.json")
+	tmpVaultPath := filepath.Join(v.path, "vault.json.tmp")
+	if err != nil {
+		return fmt.Errorf("marshal indenr error: %v", err)
+	}
+	err = os.WriteFile(tmpVaultPath, headerBytes, 0600)
+	if err != nil {
+		return fmt.Errorf("write tmp file error: %v", err)
+	}
+	err = os.Rename(tmpVaultPath, vaultPath)
+	if err != nil {
+		return fmt.Errorf("rename file error: %v", err)
+	}
+
+	return nil
 }
 
 func (v *Vault) Lock() {
