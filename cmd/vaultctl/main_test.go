@@ -43,7 +43,7 @@ func createTestVaultWithBook(t *testing.T) (string, string) {
 }
 
 func TestVaultctlBackupVerifyRestore(t *testing.T) {
-	vaultPath, _ := createTestVaultWithBook(t)
+	vaultPath, recoveryKey := createTestVaultWithBook(t)
 	tmpDir := t.TempDir()
 	backupDir := filepath.Join(tmpDir, "backup")
 	restoredVault := filepath.Join(tmpDir, "restored_vault")
@@ -60,7 +60,8 @@ func TestVaultctlBackupVerifyRestore(t *testing.T) {
 		t.Fatalf("runVerify failed: %v", err)
 	}
 
-	// 3. Test restore
+	// 3. Test authenticated restore
+	setTestStdin(recoveryKey + "\n")
 	err = runRestore([]string{backupDir, restoredVault})
 	if err != nil {
 		t.Fatalf("runRestore failed: %v", err)
@@ -130,5 +131,38 @@ func TestVaultctlPurge(t *testing.T) {
 	// Verify directory was completely destroyed
 	if _, err := os.Stat(vaultPath); !os.IsNotExist(err) {
 		t.Fatalf("expected vault directory to be deleted, but it still exists")
+	}
+}
+
+func TestRestoreWrongSecretDoesNotPublish(t *testing.T) {
+	path, _ := createTestVaultWithBook(t)
+	backupPath := filepath.Join(t.TempDir(), "backup")
+	if err := runBackup([]string{path, backupPath}); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored")
+	setTestStdin("wrong-password\n")
+	if err := runRestore([]string{backupPath, target, "--password"}); err == nil {
+		t.Fatal("wrong secret restored")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatal("failed restore published a directory")
+	}
+}
+
+func TestExportPreservesExisting(t *testing.T) {
+	path, key := createTestVaultWithBook(t)
+	out := t.TempDir()
+	original := filepath.Join(out, "manual.pdf")
+	if err := os.WriteFile(original, []byte("keep me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	setTestStdin(key + "\n")
+	if err := runExport([]string{path, out}); err == nil {
+		t.Fatal("partial export reported success")
+	}
+	data, _ := os.ReadFile(original)
+	if string(data) != "keep me" {
+		t.Fatal("existing data overwritten")
 	}
 }

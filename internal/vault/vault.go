@@ -3,6 +3,7 @@ package vault
 import (
 	"encoding/json"
 	"fmt"
+	"mut/internal/storage"
 	"os"
 	"path/filepath"
 	"uuid"
@@ -51,6 +52,7 @@ func CreateVault(vaulthPath string, password []byte) (*Vault, string, error) {
 		return nil, "", fmt.Errorf("kdf generation error: %v", err)
 	}
 	wrappingKey := deriveKey(password, kdf)
+	defer clear(wrappingKey)
 	keyNonce, wrappedMasterKey, err := encrypt(wrappingKey, masterKey, []byte(vaultID.String()))
 	if err != nil {
 		return nil, "", fmt.Errorf("Encryprion error: %v", err)
@@ -59,6 +61,7 @@ func CreateVault(vaulthPath string, password []byte) (*Vault, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("generate recovery error: %v", err)
 	}
+	defer clear(recoveryBytes)
 	recoveryNonce, cipherRecovery, err := encrypt(recoveryBytes, masterKey, []byte(vaultID.String()+":recovery"))
 	if err != nil {
 		return nil, "", fmt.Errorf("encrypt recovery error: %v", err)
@@ -78,7 +81,7 @@ func CreateVault(vaulthPath string, password []byte) (*Vault, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("marshallindent error: %v", err)
 	}
-	err = os.WriteFile(jsonPath, data, 0600)
+	err = storage.AtomicWrite(jsonPath, data, false)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to write vault.json: %v", err)
 	}
@@ -98,7 +101,7 @@ func OpenVault(vaultpath string, password []byte) (*Vault, error) {
 		return nil, fmt.Errorf("password lenght is less than 8")
 	}
 	jsonpath := filepath.Join(vaultpath, "vault.json")
-	data, err := os.ReadFile(jsonpath)
+	data, err := storage.ReadFile(jsonpath, 64<<10)
 	if err != nil {
 		return nil, fmt.Errorf("Vault not found at this path: %v", err)
 	}
@@ -109,7 +112,11 @@ func OpenVault(vaultpath string, password []byte) (*Vault, error) {
 		return nil, fmt.Errorf("unmarshall json error: %v", err)
 	}
 
+	if err := validateHeader(header); err != nil {
+		return nil, err
+	}
 	wrappingkey := deriveKey(password, header.KDF)
+	defer clear(wrappingkey)
 	masterKey, err := decrypt(wrappingkey, header.KeyNonce, header.WrappedMasterKey, []byte(header.VaultID.String()))
 	if err != nil {
 		return nil, fmt.Errorf("Invalid password or corrupdet vault: %v", err)
@@ -131,7 +138,7 @@ func OpenVaultWithRecovery(vaultpath string, recoveryKey string) (*Vault, error)
 		return nil, fmt.Errorf("recoveryKey lenght is empty")
 	}
 	jsonpath := filepath.Join(vaultpath, "vault.json")
-	data, err := os.ReadFile(jsonpath)
+	data, err := storage.ReadFile(jsonpath, 64<<10)
 	if err != nil {
 		return nil, fmt.Errorf("Vault not found at this path: %v", err)
 	}
@@ -142,6 +149,9 @@ func OpenVaultWithRecovery(vaultpath string, recoveryKey string) (*Vault, error)
 		return nil, fmt.Errorf("unmarshall json error: %v", err)
 	}
 
+	if err := validateHeader(header); err != nil {
+		return nil, err
+	}
 	if len(header.Recovery) < 40 {
 		return nil, fmt.Errorf("Recovery is empty or lenght is less than 40")
 	}
@@ -150,6 +160,7 @@ func OpenVaultWithRecovery(vaultpath string, recoveryKey string) (*Vault, error)
 	if err != nil {
 		return nil, fmt.Errorf("parse recovery error: %v", err)
 	}
+	defer clear(deriveRecovery)
 	recoveryNonce := header.Recovery[:24]
 	cipherRecovery := header.Recovery[24:]
 	decryptedRecovery, err := decrypt(deriveRecovery, recoveryNonce, cipherRecovery, []byte(header.VaultID.String()+":recovery"))
@@ -179,41 +190,40 @@ func (v *Vault) ChangePassword(oldPassword, newPassword []byte) error {
 	}
 
 	wrappedKey := deriveKey(oldPassword, v.header.KDF)
+	defer clear(wrappedKey)
 	masterKey, err := decrypt(wrappedKey, v.header.KeyNonce, v.header.WrappedMasterKey, []byte(v.header.VaultID.String()))
 	if err != nil {
 		return fmt.Errorf("decrypt master key error: %w", err)
 	}
 
+	defer clear(masterKey)
 	NewKDF, err := DefaultKDF()
 	if err != nil {
 		return fmt.Errorf("generate default KDF error: %w", err)
 	}
 
 	newWrappedKey := deriveKey(newPassword, NewKDF)
+	defer clear(newWrappedKey)
 	NewKeyNonce, NewCipherText, err := encrypt(newWrappedKey, masterKey, []byte(v.header.VaultID.String()))
 	if err != nil {
 		return fmt.Errorf("encrypt error: %v", err)
 	}
 
-	v.header.KDF = NewKDF
-	v.header.KeyNonce = NewKeyNonce
-	v.header.WrappedMasterKey = NewCipherText
+	updated := v.header
+	updated.KDF = NewKDF
+	updated.KeyNonce = NewKeyNonce
+	updated.WrappedMasterKey = NewCipherText
 
-	headerBytes, err := json.MarshalIndent(v.header, "", "  ")
+	headerBytes, err := json.MarshalIndent(updated, "", "  ")
 
 	vaultPath := filepath.Join(v.path, "vault.json")
-	tmpVaultPath := filepath.Join(v.path, "vault.json.tmp")
 	if err != nil {
-		return fmt.Errorf("marshal indenr error: %v", err)
+		return err
 	}
-	err = os.WriteFile(tmpVaultPath, headerBytes, 0600)
-	if err != nil {
-		return fmt.Errorf("write tmp file error: %v", err)
+	if err := storage.AtomicWrite(vaultPath, headerBytes, true); err != nil {
+		return err
 	}
-	err = os.Rename(tmpVaultPath, vaultPath)
-	if err != nil {
-		return fmt.Errorf("rename file error: %v", err)
-	}
+	v.header = updated
 
 	return nil
 }

@@ -15,12 +15,13 @@ var assets embed.FS
 func main() {
 	appInstance := app.NewApp()
 	err := wails.Run(&options.App{
-		Title:     "mut",
-		Width:     1024,
-		Height:    768,
-		MinWidth:  800,
-		MinHeight: 600,
-		OnStartup: appInstance.Startup,
+		Title:      "mut",
+		Width:      1024,
+		Height:     768,
+		MinWidth:   800,
+		MinHeight:  600,
+		OnStartup:  appInstance.Startup,
+		OnShutdown: appInstance.Shutdown,
 		Bind: []interface{}{
 			appInstance,
 		},
