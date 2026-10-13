@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"mut/internal/catalog"
+	"mut/internal/importer"
 	"mut/internal/vault"
 	"os"
 	"path/filepath"
@@ -14,6 +15,14 @@ type App struct {
 	vault     *vault.Vault
 	catalog   *catalog.Catalog
 	vaultPath string
+}
+
+func NewApp() *App {
+	return &App{}
+}
+
+func (app *App) Startup(ctx context.Context) {
+	app.ctx = ctx
 }
 
 func (app *App) IsVaultConfigurated() bool {
@@ -110,9 +119,47 @@ func defaultVaultPath() string {
 }
 
 func (app *App) IsUnlocked() bool {
-	if app.vault != nil && app.catalog.Vault != nil {
-		return false
-	} else {
-		return true
+	return app.vault != nil && app.catalog != nil
+}
+
+func (app *App) ListBooks() ([]catalog.Book, error) {
+	if app.catalog == nil {
+		return nil, fmt.Errorf("catalog is empty")
 	}
+	bookList, err := app.catalog.ListBooks()
+	if err != nil {
+		return nil, fmt.Errorf("get list books error: %v", err)
+	}
+
+	return bookList, nil
+}
+
+func (app *App) ListShelves() ([]string, error) {
+	if app.catalog == nil {
+		return nil, fmt.Errorf("vault is locked")
+	}
+	shelves, err := app.catalog.ListShelves()
+	if err != nil {
+		return nil, fmt.Errorf("get list of shelves error: %v", err)
+	}
+
+	return shelves, nil
+}
+
+func (app *App) ImportBook(filePath string) error {
+	if app.vault == nil || app.catalog == nil {
+		return vault.ErrVaultLocked
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read file error: %v", err)
+	}
+	fileName := filepath.Base(filePath)
+	err = importer.ImportFile(fileName, app.vault, app.catalog, data, false)
+	if err != nil {
+		return fmt.Errorf("Import file error: %v", err)
+	}
+
+	return nil
+
 }
