@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
+  import PdfPage from "./PdfPage.svelte";
   import { chapters, readingText } from "./demo";
   import type { Book } from "./ui";
+  import { OpenBook, SavePosition, SaveBookmarks } from "../wailsjs/go/app/App";
+  import type { readers } from "../wailsjs/go/models";
   export let book: Book;
   export let preview = false;
   export let fontSize = 20;
@@ -10,29 +14,187 @@
   export let onsettings: () => void;
   export let onsecurity: () => void;
   export let onchange: (key: string, value: string | number) => void;
-  let section = 3;
-  let page = 87;
-  let bookmarked = false;
+  export let onprogress: (
+    id: string,
+    progress: number,
+    locator: string,
+  ) => void = () => {};
+  export let onbookmarks: (id: string, marks: string[]) => void = () => {};
+  let bookmarkBusy = false;
+  type TextPage = {
+    title: string;
+    chapter: number;
+    start: number;
+    blocks: readers.Block[];
+  };
+  let document: readers.Document | null = null;
+  let pages: TextPage[] = [];
+  let outline: { title: string; page: number }[] = [];
+  let page = 1;
+  let total = 1;
   let tab = "contents";
   let sidebarOpen = false;
   let pageTheme = "paper";
   let appearance = false;
   let zoom = 100;
-  let marks: number[] = [];
+  let loading = !preview;
+  let error = "";
+  let disposed = false;
+  let marks = [...book.bookmarks];
+  let saveQueue = Promise.resolve();
   $: isPdf = book.format === "PDF";
-  $: progress = Math.min(100, Math.round((page / 207) * 100));
-  function bookmark() {
-    bookmarked = !bookmarked;
-    marks = bookmarked ? [...marks, page] : marks.filter((p) => p !== page);
+  $: progress = Math.round((page / total) * 100);
+  $: locator = isPdf
+    ? "v1:pdf:" + page
+    : preview
+      ? "v1:demo:" + page
+      : "v1:text:" +
+        (pages[page - 1]?.chapter || 0) +
+        ":" +
+        (pages[page - 1]?.start || 0);
+  $: bookmarked = marks.includes(locator);
+  onMount(() => {
+    if (preview) {
+      total = chapters.length;
+      page = 4;
+      outline = chapters.map((title, i) => ({ title, page: i + 1 }));
+      return;
+    }
+    void OpenBook(book.id)
+      .then((doc) => {
+        if (disposed) return;
+        document = doc;
+        if (!isPdf) {
+          for (let c = 0; c < doc.chapters.length; c++) {
+            const chapter = doc.chapters[c]!;
+            outline = [
+              ...outline,
+              { title: chapter.title, page: pages.length + 1 },
+            ];
+            let blocks: readers.Block[] = [];
+            let chars = 0;
+            let start = 0;
+            for (let b = 0; b < chapter.blocks.length; b++) {
+              const block = chapter.blocks[b]!;
+              if (
+                blocks.length &&
+                (chars + block.text.length > 7000 || blocks.length >= 60)
+              ) {
+                pages.push({ title: chapter.title, chapter: c, start, blocks });
+                blocks = [];
+                chars = 0;
+                start = b;
+              }
+              blocks.push(block);
+              chars += block.text.length;
+            }
+            if (blocks.length)
+              pages.push({ title: chapter.title, chapter: c, start, blocks });
+          }
+          total = Math.max(1, pages.length);
+          const parts = book.locator?.split(":");
+          if (parts?.[1] === "text") {
+            const found = pages.findIndex(
+              (p) =>
+                p.chapter === Number(parts[2]) && p.start === Number(parts[3]),
+            );
+            page = found >= 0 ? found + 1 : 1;
+          }
+        } else {
+          const parts = book.locator?.split(":");
+          if (parts?.[1] === "pdf") page = Math.max(1, Number(parts[2]) || 1);
+        }
+        loading = false;
+        if (!isPdf) persist();
+      })
+      .catch(() => {
+        if (!disposed) {
+          loading = false;
+          error =
+            "Не удалось открыть книгу. Проверьте файл или экспортируйте оригинал для внешней программы.";
+        }
+      });
+  });
+  onDestroy(() => {
+    disposed = true;
+    document = null;
+    pages = [];
+    marks = [];
+  });
+  function persist() {
+    if (preview || disposed || !document) return;
+    const value = isPdf
+      ? "v1:pdf:" + page
+      : "v1:text:" +
+        (pages[page - 1]?.chapter || 0) +
+        ":" +
+        (pages[page - 1]?.start || 0);
+    const pct = Math.round((page / total) * 100);
+    saveQueue = saveQueue
+      .then(async () => {
+        await SavePosition(book.id, pct, value);
+        if (!disposed) onprogress(book.id, pct, value);
+      })
+      .catch(() => {
+        if (!disposed)
+          error = "Не удалось сохранить позицию. Проверьте доступ к диску.";
+      });
+  }
+  function go(next: number) {
+    page = Math.max(1, Math.min(total, next));
+    sidebarOpen = false;
+    persist();
   }
   function navigate(delta: number) {
-    if (!preview) return;
-    page = Math.max(1, Math.min(207, page + delta));
-    bookmarked = marks.includes(page);
+    go(page + delta);
+  }
+  function pdfReady(count: number, toc: { title: string; page: number }[]) {
+    total = count;
+    page = Math.min(page, total);
+    outline = toc.length
+      ? toc
+      : Array.from({ length: Math.min(count, 1000) }, (_, i) => ({
+          title: "Страница " + (i + 1),
+          page: i + 1,
+        }));
+    persist();
+  }
+  async function leave() {
+    await saveQueue;
+    if (!disposed) onback();
+  }
+  async function updateMarks(next: string[]) {
+    if (bookmarkBusy) return;
+    bookmarkBusy = true;
+    try {
+      if (!preview) await SaveBookmarks(book.id, next);
+      if (!disposed) {
+        marks = next;
+        onbookmarks(book.id, next);
+      }
+    } catch {
+      if (!disposed) error = "Не удалось сохранить закладку.";
+    } finally { bookmarkBusy = false; }
+  }
+  async function bookmark() {
+    const value = locator;
+    const next = marks.includes(value)
+      ? marks.filter((m) => m !== value)
+      : [...marks, value];
+    await updateMarks(next);
+  }
+  function markPage(mark: string) {
+    if (isPdf) return Number(mark.split(":")[2]) || 1;
+    const p = mark.split(":");
+    return (
+      pages.findIndex(
+        (item) => item.chapter === Number(p[2]) && item.start === Number(p[3]),
+      ) + 1 || 1
+    );
   }
   function shortcut(e: KeyboardEvent) {
-    if (document.querySelector("dialog[open]")) return;
     if (
+      window.document.querySelector("dialog[open]") ||
       e.target instanceof HTMLInputElement ||
       e.target instanceof HTMLSelectElement
     )
@@ -41,7 +203,7 @@
     if (e.key === "ArrowLeft") navigate(-1);
     if (e.key === "Escape") {
       if (appearance) appearance = false;
-      else onback();
+      else void leave();
     }
   }
 </script>
@@ -49,8 +211,8 @@
 <svelte:window on:keydown={shortcut} />
 <div class="reader-layout">
   <header class="reader-header">
-    <button class="back-library panel" on:click={onback}
-      ><Icon name="back" size={18} /><span>Все книги</span></button
+    <button class="back-library panel" on:click={leave}
+      ><Icon name="back" /><span>Все книги</span></button
     >
     <div class="reader-title">
       <strong>{book.title}</strong><small>{book.author}</small>
@@ -66,7 +228,7 @@
         class:marked={bookmarked}
         aria-pressed={bookmarked}
         aria-label="Поставить закладку"
-        disabled={!preview}
+        disabled={loading || Boolean(error) || bookmarkBusy}
         on:click={bookmark}><Icon name="bookmark" /></button
       ><button
         class="icon-button"
@@ -105,37 +267,31 @@
           >
         </div>
         <div class="hairlines" aria-hidden="true"><i></i><i></i><i></i></div>
-        {#if preview}{#if tab === "contents"}{#each chapters as chapter, i}<button
+        <div class="toc-scroll">
+          {#if tab === "contents"}{#each outline as chapter}<button
                 class="chapter"
-                class:active={i === section}
-                on:click={() => {
-                  section = i;
-                  page = 1 + i * 28;
-                  sidebarOpen = false;
-                  bookmarked = marks.includes(page);
-                }}>{chapter}</button
-              >{/each}{:else}{#each marks as mark}<button
-                class="chapter"
-                on:click={() => {
-                  page = mark;
-                  bookmarked = true;
-                  sidebarOpen = false;
-                }}>Страница {mark}</button
-              >{/each}{#if !marks.length}<p class="toc-empty">
+                class:active={chapter.page === page}
+                on:click={() => go(chapter.page)}>{chapter.title}</button
+              >{/each}{:else}{#each marks as mark}<div class="row">
+                <button class="chapter" on:click={() => go(markPage(mark))}
+                  >Страница {markPage(mark)}</button
+                ><button
+                  class="text-button"
+                  aria-label="Удалить закладку"
+                  disabled={bookmarkBusy}
+                  on:click={() => updateMarks(marks.filter((m) => m !== mark))}><Icon name="close" size={14} /></button
+                >
+              </div>{/each}{#if !marks.length}<p class="toc-empty">
                 Поставьте закладку, чтобы вернуться к важному.
-              </p>{/if}{/if}{:else}<p class="toc-empty">
-            Здесь появятся главы и закладки книги.
-          </p>{/if}
+              </p>{/if}{/if}
+        </div>
       </div>
       <div class="panel reading-progress">
         <div class="row spread">
-          <span>{preview ? progress : Math.round(book.progress)}%</span><span
-            class="muted"
-            >{preview ? "глава " + section + " из 5" : book.format}</span
-          >
+          <span>{progress}%</span><span class="muted">{page} из {total}</span>
         </div>
         <div class="progress-track">
-          <span style:width={(preview ? progress : book.progress) + "%"}></span>
+          <span style:width={progress + "%"}></span>
         </div>
       </div>
       <button class="text-button reader-lock" on:click={onsecurity}
@@ -143,49 +299,74 @@
       >
     </aside>
     <main class="reading-area">
-      <article
-        class="reading-page"
-        class:night={pageTheme === "night"}
-        class:white={pageTheme === "white"}
-        style:font-size={(isPdf ? (20 * zoom) / 100 : fontSize) + "px"}
-        style:line-height={lineHeight}
-      >
-        {#if preview}<div class="page-eyebrow">
+      {#if loading}<p class="muted" role="status">
+          Открываем книгу…
+        </p>{:else if error}<div class="reader-placeholder">
+          <p class="error" role="alert">{error}</p>
+          <button class="secondary" on:click={leave}>К библиотеке</button>
+        </div>{:else}<article
+          class="reading-page"
+          class:night={pageTheme === "night"}
+          class:white={pageTheme === "white"}
+          class:pdf-page={isPdf && !preview}
+          style:font-size={fontSize + "px"}
+          style:line-height={lineHeight}
+        >
+          <div class="page-eyebrow">
             <span
-              >{isPdf
-                ? "PDF · " + zoom + "%"
-                : book.format +
-                  " · ГЛАВА " +
-                  ["0", "I", "II", "III", "IV", "V"][section]}</span
+              >{book.format} · {isPdf
+                ? "СТРАНИЦА " + page
+                : "ЧАСТЬ " + page}</span
             ><span>{book.title}</span>
           </div>
-          <h1>
-            {section === 3
-              ? "Тишина, у которой есть орбита"
-              : chapters[section]?.replace(/^\d\. /, "")}
-          </h1>
-          <div class="page-lines" aria-hidden="true"><i></i><i></i><i></i></div>
-          <div class="prose">
-            {#each readingText as paragraph}<p>{paragraph}</p>{/each}
-          </div>
+          {#if isPdf && document && !preview}<PdfPage
+              data={document.pdf || ""}
+              {page}
+              {zoom}
+              onloaded={pdfReady}
+            />{:else}<h1>
+              {preview
+                ? page === 4
+                  ? "Тишина, у которой есть орбита"
+                  : chapters[page - 1]
+                : pages[page - 1]?.title}
+            </h1>
+            <div class="page-lines" aria-hidden="true">
+              <i></i><i></i><i></i>
+            </div>
+            <div class="prose">
+              {#if preview}{#each readingText as paragraph}<p>
+                    {paragraph}
+                  </p>{/each}{:else}{#each pages[page - 1]?.blocks || [] as block}{#if block.kind === "image" && block.image}<img
+                      class="book-image"
+                      src={block.image}
+                      alt="Иллюстрация"
+                    />{:else if block.kind === "h2" || block.kind === "h1"}<h2>
+                      {block.text}
+                    </h2>{:else if block.kind === "quote"}<blockquote>
+                      {block.text}
+                    </blockquote>{:else if block.kind === "pre"}<pre>{block.text}</pre>{:else}<p
+                    >
+                      {block.text}
+                    </p>{/if}{/each}{/if}
+            </div>{/if}
           <footer class="page-footer">
             <button on:click={() => navigate(-1)} disabled={page === 1}
               >Предыдущая страница</button
-            ><span>{page}</span><button
-              on:click={() => navigate(1)}
-              disabled={page === 207}>Следующая страница</button
+            ><label class="page-jump"
+              ><input
+                type="number"
+                min="1"
+                max={total}
+                value={page}
+                aria-label="Перейти к странице"
+                on:change={(e) => go(Number(e.currentTarget.value))}
+              /><span> / {total}</span></label
+            ><button on:click={() => navigate(1)} disabled={page === total}
+              >Следующая страница</button
             >
           </footer>
-        {:else}<div class="reader-placeholder">
-            <Icon name="book" size={36} />
-            <h1>Место для вашей книги</h1>
-            <p>Чтение этой книги пока недоступно.</p>
-            <button class="secondary" on:click={onback}
-              >К библиотеке <Icon name="back" size={16} /></button
-            >
-          </div>{/if}
-      </article>
-      {#if preview}<small class="reader-preview"
+        </article>{/if}{#if preview}<small class="reader-preview"
           >Демонстрационный текст · {book.format}</small
         >{/if}
     </main>
@@ -218,6 +399,55 @@
 </div>
 
 <style>
+  .toc-scroll {
+    max-height: 55vh;
+    overflow: auto;
+  }
+  .chapter {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .book-image {
+    max-width: 100%;
+    max-height: 600px;
+    display: block;
+    margin: 24px auto;
+  }
+  .prose h2 {
+    font-family: Literata, serif;
+    font-size: 1.2em;
+    margin: 20px 0;
+  }
+  .prose blockquote {
+    border-left: 2px solid #64726466;
+    margin: 20px 0;
+    padding-left: 20px;
+  }
+  .prose pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.8em;
+  }
+  .page-jump {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .page-jump input {
+    width: 55px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    border: 1px solid #64726433;
+    color: inherit;
+    background: none;
+    font: inherit;
+  }
+  .pdf-page {
+    padding: 24px;
+    width: min(950px, 100%);
+  }
+
   .reader-layout {
     height: 100%;
     display: flex;
@@ -450,10 +680,7 @@
     align-items: center;
     gap: 20px;
   }
-  .reader-placeholder h1 {
-    font-size: 27px;
-    margin: 0;
-  }
+
   .reader-placeholder p {
     font-size: 16px;
   }

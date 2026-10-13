@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import Icon from "./Icon.svelte";
   import BookCover from "./BookCover.svelte";
   import { formatSize, type Book } from "./ui";
   export let books: Book[] = [];
   export let view: "grid" | "list" = "grid";
   export let density = "comfortable";
   export let onopen: (book: Book) => void;
+  export let ondetails: (book: Book) => void;
   let viewport: HTMLDivElement;
   let width = 1100;
   let height = 650;
@@ -52,30 +54,36 @@
     style:grid-template-columns={"repeat(" + columns + ",minmax(0,1fr))"}
   >
     {#each visible as book, i (book.id)}
-      <button
-        class="book-item"
-        class:list-item={view === "list"}
-        on:click={() => onopen(book)}
-        aria-label={"Открыть " + book.title + " · " + book.author}
-      >
-        <BookCover
-          {book}
-          index={start * columns + i}
-          compact={view === "list"}
-        />
-        <div class="book-info">
-          <strong title={book.title}>{book.title}</strong>
-          <div class="book-byline">
-            <span title={book.author}>{book.author}</span
-            >{#if book.progress > 0}<span class="size"
-                >{Math.round(book.progress)}%</span
-              >{/if}
+      <div class="book-entry" class:list-entry={view === "list"}>
+        <button
+          class="book-item"
+          class:list-item={view === "list"}
+          on:click={() => onopen(book)}
+          aria-label={"Открыть " + book.title + " · " + book.author}
+        >
+          <BookCover
+            {book}
+            index={start * columns + i}
+            compact={view === "list"}
+          />
+          <div class="book-info">
+            <strong title={book.title}>{book.title}</strong>
+            <div class="book-byline">
+              <span title={book.author}>{book.author}</span
+              >{#if book.progress > 0}<span class="size"
+                  >{Math.round(book.progress)}%</span
+                >{/if}
+            </div>
           </div>
-        </div>
-        {#if view === "list"}<span class="list-format">{book.format}</span><span
-            class="list-size size">{formatSize(book.size)}</span
-          >{/if}
-      </button>
+          {#if view === "list"}<span class="list-format">{book.format}</span
+            ><span class="list-size size">{formatSize(book.size)}</span>{/if}
+        </button><button
+          class="book-details icon-button"
+          aria-label={"Карточка книги: " + book.title}
+          on:click={() => ondetails(book)}
+          ><Icon name="more" size={16} /></button
+        >
+      </div>
     {/each}
   </div>
   <div
@@ -85,6 +93,35 @@
 </div>
 
 <style>
+  .book-entry {
+    position: relative;
+    min-width: 0;
+  }
+  .book-entry .book-item {
+    width: 100%;
+  }
+  .book-details {
+    position: absolute;
+    right: 10px;
+    bottom: 74px;
+    width: 28px;
+    height: 28px;
+    opacity: 0;
+    background: var(--panel);
+  }
+  .book-entry:hover .book-details,
+  .book-details:focus-visible {
+    opacity: 1;
+  }
+  .list-entry .book-details {
+    bottom: 24px;
+    right: 2px;
+    opacity: 1;
+  }
+  .list-entry .book-item {
+    padding-right: 40px;
+  }
+
   .viewport {
     flex: 1;
     min-height: 0;

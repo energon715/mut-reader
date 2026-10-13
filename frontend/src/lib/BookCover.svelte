@@ -1,8 +1,24 @@
 <script lang="ts">
   import { tones, type Book } from "./ui";
+  import { onMount } from "svelte";
+  import { GetCover } from "../wailsjs/go/app/App";
   export let book: Book;
   export let index = 0;
   export let compact = false;
+  let cover = "";
+  onMount(() => {
+    let alive = true;
+    if (book.coverId)
+      void GetCover(book.id)
+        .then((value) => {
+          if (alive) cover = value;
+        })
+        .catch(() => {});
+    return () => {
+      alive = false;
+      cover = "";
+    };
+  });
   $: tone = tones[book.tone % tones.length];
   $: darkText = [1, 3, 4, 6, 9, 10].includes(book.tone % 12);
 </script>
@@ -14,15 +30,23 @@
   style:color={darkText ? "#262e2c" : "#eef0ee"}
   aria-hidden="true"
 >
-  <div class="cover-meta">
-    <span>K—{String(index + 1).padStart(2, "0")}</span><span>{book.format}</span
-    >
-  </div>
-  <div class="cover-title">{book.title}</div>
-  <span class="cover-author">{book.author}</span>
+  {#if cover}<img class="cover-image" src={cover} alt="" />{:else}
+    <div class="cover-meta">
+      <span>K—{String(index + 1).padStart(2, "0")}</span><span
+        >{book.format}</span
+      >
+    </div>
+    <div class="cover-title">{book.title}</div>
+    <span class="cover-author">{book.author}</span>{/if}
 </div>
 
 <style>
+  .cover-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 12px;
+  }
   .book-cover {
     width: 100%;
     height: 238px;

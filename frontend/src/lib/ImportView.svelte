@@ -4,7 +4,7 @@
   import PathField from "./PathField.svelte";
   export let preview = false;
   export let initial = "choose";
-  export let onimport: (path: string) => Promise<void>;
+  export let onimport: (path: string, keepDuplicate?: boolean) => Promise<void>;
   export let onclose: () => void;
   export let importDirectory: string;
   export let defaultImportDirectory: string;
@@ -13,6 +13,12 @@
   export let onpathchange: (value: string) => void;
   export let onbrowse: (title: string, currentPath: string) => Promise<string>;
   export let onselectfiles: () => Promise<string[]>;
+  export let onselectfolder: () => Promise<string[]>;
+  export let oncomplete: () => Promise<void>;
+  let duplicateName = "Map of Winds";
+  let applyDuplicates = false;
+  let allDuplicateChoice: boolean | null = null;
+  let duplicateResolver: ((edition: boolean) => void) | null = null;
   type Item = { name: string; format: string; state: string; error?: string };
   let paths = "";
   let items: Item[] = [];
@@ -22,11 +28,11 @@
   let processed = 0;
   let selecting = false;
   let pickerError = "";
-  async function selectFiles() {
+  async function selectFiles(folder = false) {
     selecting = true;
     pickerError = "";
     try {
-      const selected = await onselectfiles();
+      const selected = await (folder ? onselectfolder() : onselectfiles());
       if (selected.length)
         paths = [
           ...new Set([...paths.split("\n").filter(Boolean), ...selected]),
@@ -40,6 +46,7 @@
   }
   onDestroy(() => {
     cancelled = true;
+    duplicateResolver?.(false);
   });
   $: percent = items.length ? Math.round((processed / items.length) * 100) : 0;
   $: if (initial === "duplicate" && items.length === 0) {
@@ -87,22 +94,54 @@
         await onimport(files[i]!);
         items[i]!.state = "Сохранено";
       } catch (error) {
-        const message = String(error);
-        items[i]!.state = /duplicate|already exists|дубликат/i.test(message)
-          ? "Пропущено"
-          : "Ошибка";
-        items[i]!.error =
-          items[i]!.state === "Ошибка"
-            ? "Файл не добавлен. Проверьте путь, доступ и целостность файла."
-            : "Такой файл уже есть в библиотеке.";
+        const duplicate = /duplicate|already exists|дубликат/i.test(
+          String(error),
+        );
+        if (duplicate) {
+          duplicateName = items[i]!.name;
+          items[i]!.state = "Дубликат";
+          items = [...items];
+          state = "duplicate";
+          const edition =
+            allDuplicateChoice !== null
+              ? allDuplicateChoice
+              : await new Promise<boolean>(
+                  (resolve) => (duplicateResolver = resolve),
+                );
+          duplicateResolver = null;
+          if (applyDuplicates) allDuplicateChoice = edition;
+          if (edition && !cancelled) {
+            try {
+              await onimport(files[i]!, true);
+              items[i]!.state = "Сохранено";
+            } catch {
+              items[i]!.state = "Ошибка";
+              items[i]!.error = "Не удалось сохранить редакцию.";
+            }
+          } else items[i]!.state = "Пропущено";
+          state = "progress";
+        } else {
+          items[i]!.state = "Ошибка";
+          items[i]!.error =
+            "Файл не добавлен. Проверьте путь, доступ, размер и свободное место.";
+        }
       }
       processed = i + 1;
       items = [...items];
     }
     busy = false;
     state = "done";
+    try {
+      await oncomplete();
+    } catch {
+      pickerError = "Не удалось обновить библиотеку после импорта.";
+    }
   }
   function resolveDuplicate(edition = false) {
+    if (duplicateResolver) {
+      duplicateResolver(edition);
+      return;
+    }
     items = items.map((item) =>
       item.state === "Дубликат"
         ? { ...item, state: edition ? "Сохранено" : "Пропущено" }
@@ -139,10 +178,16 @@
         class="secondary choose-files"
         type="button"
         disabled={!pickerAvailable || selecting}
-        on:click={selectFiles}
+        on:click={() => selectFiles()}
         ><Icon name="folder" size={18} />{selecting
           ? "Открываем…"
           : "Выбрать файлы…"}</button
+      >
+      <button
+        class="secondary"
+        type="button"
+        disabled={!directoryPickerAvailable || selecting}
+        on:click={() => selectFiles(true)}>Добавить всю папку</button
       >
       {#if !pickerAvailable}<small class="muted"
           >Системный выбор файлов пока не подключён. Укажите пути ниже.</small
@@ -206,7 +251,8 @@
     </div>
     {#if state === "duplicate"}<div class="duplicate notice">
         <div class="row spread">
-          <strong>«Map of Winds» уже в библиотеке</strong><small>ДУБЛИКАТ</small
+          <strong>«{duplicateName}» уже в библиотеке</strong><small
+            >ДУБЛИКАТ</small
           >
         </div>
         <p>
@@ -220,7 +266,8 @@
           >
         </div>
         <label class="check"
-          ><input type="checkbox" /> Применить к оставшимся дубликатам</label
+          ><input type="checkbox" bind:checked={applyDuplicates} /> Применить к оставшимся
+          дубликатам</label
         >
       </div>{/if}{#if state === "done"}<div class="notice">
         <strong>{cancelled ? "Импорт остановлен" : "Импорт завершён"}</strong>
@@ -235,7 +282,10 @@
       <span class="muted">{preview ? "Демонстрация интерфейса" : ""}</span
       >{#if busy}<button
           class="secondary"
-          on:click={() => (cancelled = true)}
+          on:click={() => {
+            cancelled = true;
+            duplicateResolver?.(false);
+          }}
           disabled={cancelled}
           >{cancelled ? "Останавливаем…" : "Остановить импорт"}</button
         >{:else}<button class="primary" on:click={onclose}

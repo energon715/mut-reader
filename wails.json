@@ -2,7 +2,7 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "mut",
   "outputfilename": "mut",
-  "frontend:install": "npm install",
+  "frontend:install": "npm ci",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
@@ -12,7 +12,7 @@
   "info": {
     "companyName": "mut",
     "productName": "mut reader",
-    "productVersion": "0.1.0",
+    "productVersion": "1.0.0-rc.1",
     "copyright": "MPL-2.0"
   },
   "build:tags": "webkit2_41",

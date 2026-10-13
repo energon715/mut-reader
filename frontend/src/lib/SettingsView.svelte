@@ -4,11 +4,41 @@
   export let theme = "dark";
   export let density = "comfortable";
   export let fontSize = 20;
+  export let autoLockMinutes = 20;
   export let lineHeight = 1.5;
   export let books: Book[] = [];
   export let path = "";
   export let onchange: (key: string, value: string | number) => void;
   export let onbackup: () => void;
+  export let onpasswordchange: (
+    oldPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
+  let oldPassword = "";
+  let newPassword = "";
+  let confirmation = "";
+  let passwordBusy = false;
+  let passwordMessage = "";
+  async function changePassword() {
+    if (newPassword.length < 8 || newPassword !== confirmation) return;
+    passwordBusy = true;
+    passwordMessage = "";
+    const old = oldPassword;
+    const next = newPassword;
+    oldPassword = "";
+    newPassword = "";
+    confirmation = "";
+    try {
+      await onpasswordchange(old, next);
+      passwordMessage =
+        "Пароль изменён. Код восстановления продолжает работать.";
+    } catch {
+      passwordMessage =
+        "Не удалось изменить пароль. Проверьте текущий пароль и доступ к диску.";
+    } finally {
+      passwordBusy = false;
+    }
+  }
   let tab = "general";
   const tabs = [
     { id: "general", title: "Общие", icon: "settings" },
@@ -71,6 +101,22 @@
         </div>
         <span class="muted">Русский</span>
       </div>
+      <div class="setting">
+        <div>
+          <label for="auto-lock">Автоблокировка</label><small
+            >После отсутствия действий в приложении</small
+          >
+        </div>
+        <select
+          id="auto-lock"
+          value={autoLockMinutes}
+          on:change={(e) =>
+            onchange("autoLockMinutes", Number(e.currentTarget.value))}
+          >{#each [0, 5, 10, 20, 60, 120] as minutes}<option value={minutes}
+              >{minutes ? minutes + " мин" : "Выключена"}</option
+            >{/each}</select
+        >
+      </div>
     {:else if tab === "reading"}<h3>Чтение</h3>
       <p class="muted section-desc">Настройки страницы для EPUB и FB2</p>
       <div class="setting">
@@ -128,13 +174,50 @@
       <button class="secondary" on:click={onbackup}
         ><Icon name="disk" size={16} /> Резервные копии</button
       >
+      <form
+        class="stack password-form"
+        on:submit|preventDefault={changePassword}
+      >
+        <h3>Изменить пароль</h3>
+        <label class="field"
+          ><span>Текущий пароль</span><input
+            bind:value={oldPassword}
+            type="password"
+            autocomplete="current-password"
+            required
+          /></label
+        ><label class="field"
+          ><span>Новый пароль</span><input
+            bind:value={newPassword}
+            type="password"
+            minlength="8"
+            autocomplete="new-password"
+            required
+          /></label
+        ><label class="field"
+          ><span>Повторите новый пароль</span><input
+            bind:value={confirmation}
+            type="password"
+            autocomplete="new-password"
+            required
+          /></label
+        ><button
+          class="primary"
+          disabled={passwordBusy ||
+            !oldPassword ||
+            newPassword.length < 8 ||
+            newPassword !== confirmation}>Изменить пароль</button
+        >{#if passwordMessage}<p class="muted" role="status">
+            {passwordMessage}
+          </p>{/if}
+      </form>
     {:else}<h3>Ваши книги остаются вашими</h3>
       <p class="about-text muted">
         mut — тихое место для чтения и личный архив. Без аккаунта, ленты и
         подписки. Для книг, к которым хочется возвращаться.
       </p>
       <div class="setting">
-        <span>Приложение</span><span class="muted">mut · прототип</span>
+        <span>Приложение</span><span class="muted">mut · 1.0.0-rc.1</span>
       </div>
       <div class="setting">
         <span>Платформа</span><span class="muted">Linux desktop</span>
@@ -151,6 +234,13 @@
 </div>
 
 <style>
+  .password-form {
+    border-top: 1px solid var(--line);
+    margin-top: 24px;
+    padding-top: 24px;
+    gap: 16px;
+  }
+
   .settings-layout {
     display: grid;
     grid-template-columns: 214px minmax(0, 1fr);

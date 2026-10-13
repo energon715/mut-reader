@@ -5,8 +5,7 @@ export type DirectoryPaths = {
   imports: string;
 };
 
-// A build on this computer has useful defaults before the optional native
-// GetDefaultPaths method is implemented. Native defaults take precedence.
+// Browser preview defaults. Desktop obtains paths from the running user.
 const home = import.meta.env.VITE_MUT_HOME.replace(/\/$/, "");
 export const initialDefaults: DirectoryPaths = {
   library: `${home}/.local/share/mut/vault`,
@@ -46,7 +45,7 @@ function bridge(): DirectoryBridge {
   );
 }
 
-// Optional until the application author implements these Go bridge methods.
+// Capability detection also supports the browser-only design preview.
 export function hasDirectoryPicker() {
   return typeof bridge().ChooseDirectory === "function";
 }

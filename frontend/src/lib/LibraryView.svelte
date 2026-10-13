@@ -15,6 +15,8 @@
   export let onbackups: () => void;
   export let onsecurity: () => void;
   export let onopen: (book: Book) => void;
+  export let ondetails: (book: Book) => void;
+  export let onmanageshelf: (name: string) => void;
   let active = "all";
   let shelf = "";
   let query = "";
@@ -181,7 +183,15 @@
     <main class="workspace">
       <div class="workspace-title">
         <div>
-          <h1>{query ? "Результаты поиска" : title}</h1>
+          <div class="row">
+            <h1>{query ? "Результаты поиска" : title}</h1>
+            {#if active === "shelf"}<button
+                class="icon-button"
+                aria-label="Изменить полку"
+                on:click={() => onmanageshelf(shelf)}
+                ><Icon name="more" size={16} /></button
+              >{/if}
+          </div>
           <div class="subtitle">
             <span
               >{filtered.length}
@@ -247,7 +257,13 @@
             }}>Все книги <Icon name="arrow" size={16} /></button
           >
         </div>
-      {:else}<BookCollection books={filtered} {view} {density} {onopen} />{/if}
+      {:else}<BookCollection
+          books={filtered}
+          {view}
+          {density}
+          {onopen}
+          {ondetails}
+        />{/if}
     </main>
   </div>
   <button

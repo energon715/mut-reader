@@ -11,11 +11,13 @@ export type Book = {
   originalName: string;
   updatedAt: string;
   tone: number;
+  locator?: string;
+  coverId?: string;
 };
 export type Screen =
   "library" | "login" | "create" | "recovery" | "reader" | "backup" | "restore";
 export type Overlay =
-  "settings" | "import" | "book" | "shelf" | "security" | null;
+  "settings" | "import" | "book" | "shelf" | "manageshelf" | "security" | null;
 export function fromCatalog(book: catalog.Book, index: number): Book {
   const id: unknown = book.id;
   const readingDate = String(book.position?.updateat || "");
@@ -36,6 +38,8 @@ export function fromCatalog(book: catalog.Book, index: number): Book {
         ? readingDate
         : String(book.updatedat || book.createdat || ""),
     tone: index % 12,
+    locator: book.position?.locator || "",
+    coverId: book.coverobjectid || "",
   };
 }
 export function formatSize(bytes: number) {

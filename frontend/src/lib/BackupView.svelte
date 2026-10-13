@@ -1,8 +1,10 @@
 <script lang="ts">
   import Brand from "./Brand.svelte";
   import Icon from "./Icon.svelte";
-  import { formatSize, type Book } from "./ui";
   import PathField from "./PathField.svelte";
+  import { formatSize, type Book } from "./ui";
+  import { CreateBackup, RestoreBackup } from "../wailsjs/go/app/App";
+  import type { app } from "../wailsjs/go/models";
   export let restore = false;
   export let preview = false;
   export let initial = "choose";
@@ -17,16 +19,43 @@
   export let pickerAvailable = false;
   export let onpathchange: (key: "backup" | "restore", value: string) => void;
   export let onbrowse: (title: string, currentPath: string) => Promise<string>;
+  export let onrestored: (path: string) => void = () => {};
   let state = initial;
   let folder = backupPath;
   let destination = restorePath;
   let secret = "";
   let recovery = false;
   let visible = false;
+  let busy = false;
+  let error = "";
+  let report: app.BackupReport | null = null;
   $: totalSize = books.reduce((sum, b) => sum + b.size, 0);
-  function advance() {
+  async function advance() {
+    if (preview) {
+      state = state === "choose" ? "verify" : "done";
+      return;
+    }
+    if (busy || !folder.trim() || (restore && (!secret || !destination.trim())))
+      return;
+    busy = true;
+    error = "";
+    state = "verify";
+    const credential = secret;
     secret = "";
-    state = state === "choose" ? "verify" : "done";
+    try {
+      report = restore
+        ? await RestoreBackup(folder, destination, credential, recovery)
+        : await CreateBackup(folder);
+      state = "done";
+      if (restore) onrestored(report.path);
+    } catch {
+      state = "choose";
+      error = restore
+        ? "Не удалось восстановить архив. Проверьте копию, пароль или код. Папка назначения должна быть новой."
+        : "Не удалось создать копию. Проверьте свободное место, доступ к папке и целостность библиотеки.";
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -63,8 +92,7 @@
                 </p>
               </div>
               <span>{formatSize(totalSize)}</span>
-            </div>{/if}
-          <PathField
+            </div>{/if}<PathField
             label={restore ? "Папка резервной копии" : "Куда сохранить копию"}
             bind:value={folder}
             defaultPath={defaultBackupPath}
@@ -74,15 +102,15 @@
           />
           {#if restore}<div class="row">
               <button
-                class={recovery ? "secondary" : "primary"}
                 type="button"
+                class={recovery ? "secondary" : "primary"}
                 on:click={() => {
                   recovery = false;
                   secret = "";
                 }}>Пароль копии</button
               ><button
-                class={recovery ? "primary" : "secondary"}
                 type="button"
+                class={recovery ? "primary" : "secondary"}
                 on:click={() => {
                   recovery = true;
                   secret = "";
@@ -92,7 +120,7 @@
             <div class="field">
               <label for="restore-secret"
                 >{recovery
-                  ? "Код восстановления"
+                  ? "Полный код восстановления"
                   : "Пароль, действовавший при создании копии"}</label
               >
               <div class="input-wrap">
@@ -123,25 +151,19 @@
             >
             <p>
               {restore
-                ? "Выберите пустую папку. Перед восстановлением файлы должны пройти проверку целостности."
-                : "Чтобы открыть её на другом компьютере, понадобятся пароль или код восстановления. Лучше выбрать другой носитель."}
+                ? "Выберите новую папку. Перед публикацией восстановленного архива проверяются каталог и расшифрование объектов."
+                : "В выбранной папке появится отдельная копия с датой создания. Для её открытия понадобятся пароль или код восстановления."}
             </p>
           </div>
           {#if !restore}<div>
               <span class="eyebrow">После копирования</span>
               <p class="backup-note">
-                mut должен повторно прочитать файлы копии и сверить контрольные
-                суммы.
+                mut повторно прочитает файлы копии и сверит контрольные суммы.
               </p>
               <p class="muted">
                 Носитель можно отключить после завершения проверки.
               </p>
-            </div>{/if}
-          {#if !preview}<p class="availability muted">
-              {restore
-                ? "Восстановление пока недоступно в приложении."
-                : "Создание копии пока недоступно в приложении."}
-            </p>{/if}
+            </div>{/if}{#if error}<p class="error" role="alert">{error}</p>{/if}
           <div class="footer-row">
             <div class="row">
               <button type="button" class="secondary" on:click={onback}
@@ -154,7 +176,7 @@
             </div>
             <button
               class="primary"
-              disabled={!preview ||
+              disabled={busy ||
                 !folder.trim() ||
                 (restore && (!secret || !destination.trim()))}
               >{preview
@@ -167,44 +189,28 @@
           </div>
         </form>
       {:else if state === "verify"}<span class="eyebrow"
-          >{restore ? "Проверка перед восстановлением" : "Проверка копии"}</span
+          >Проверка целостности</span
         >
         <h1 class="flow-title">Убеждаемся, что каждая книга на месте</h1>
-        <p>Проверка целостности файлов и структуры архива.</p>
+        <p>
+          {restore
+            ? "Проверяем копию и расшифрование объектов."
+            : "Копируем файлы и проверяем контрольные суммы."}
+        </p>
         <div class="stack">
-          <div class="verification">
-            <div class="row spread">
-              <span>Проверено 14 из 20 файлов</span><span>70%</span>
-            </div>
-            <div class="progress-track"><span style:width="70%"></span></div>
+          <div class="verification" role="status">
+            <div class="progress-track running"><span></span></div>
             <p class="muted">
-              Имена книг остаются скрыты до открытия библиотеки.
+              Не отключайте носитель. Операция может занять несколько минут.
             </p>
-          </div>
-          <div class="status-row">
-            <Icon name="check" /><span>Структура архива</span><span
-              class="muted">Проверена</span
-            >
-          </div>
-          <div class="status-row">
-            <Icon name="check" /><span>Контрольные суммы</span><span
-              class="muted">14 из 20</span
-            >
           </div>
           <div class="notice">
-            <strong>Не отключайте носитель</strong>
-            <p>
-              Дождитесь окончания проверки. Она подтверждает, что все файлы
-              скопированы целиком.
-            </p>
+            <strong>Архив публикуется после проверки</strong>
+            <p>Незавершённая операция не заменяет существующую библиотеку.</p>
           </div>
-          <div class="footer-row">
-            <button class="secondary" on:click={onback}>Назад</button><button
-              class="primary"
-              on:click={advance}
+          {#if preview}<button class="primary" on:click={advance}
               >Посмотреть результат <Icon name="arrow" size={16} /></button
-            >
-          </div>
+            >{/if}
         </div>
       {:else}<div class="verified">
           <div class="verified-icon"><Icon name="shield" size={36} /></div>
@@ -218,28 +224,30 @@
           </h1>
           <p class="muted">
             {restore
-              ? "Книги, полки, закладки и позиции чтения восстановлены."
+              ? "Каталог и объекты проверены расшифрованием."
               : "Файлы копии прочитаны повторно. Контрольные суммы совпадают."}
           </p>
           <div class="verified-report">
-            <div><span>Файлы</span><strong>20 из 20</strong></div>
+            <div>
+              <span>Файлы</span><strong
+                >{preview ? "20" : report?.files || "Все"}</strong
+              >
+            </div>
             <div><span>Целостность</span><strong>Проверена</strong></div>
             <div><span>Ошибки</span><strong>0</strong></div>
           </div>
           <div class="notice">
             <strong
               >{restore
-                ? "Можно продолжать читать"
+                ? "Можно открыть восстановленный архив"
                 : "Носитель можно отключить"}</strong
             >
-            <p>
-              {restore
-                ? "Откройте библиотеку с паролем или кодом восстановления."
-                : "Храните копию отдельно от основного устройства. Периодически проверяйте её."}
+            <p class="report-path">
+              {preview ? "Демонстрационный результат" : report?.path}
             </p>
           </div>
           <button class="primary" on:click={onback}
-            >К библиотеке <Icon name="arrow" size={16} /></button
+            >Назад <Icon name="arrow" size={16} /></button
           >
         </div>{/if}
       {#if preview}<p class="preview-caption">
@@ -250,6 +258,33 @@
 </main>
 
 <style>
+  .report-path {
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+  .running {
+    height: 5px !important;
+  }
+  .running span {
+    width: 30%;
+    animation: moving 1.5s ease-in-out infinite;
+  }
+  @keyframes moving {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(400%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .running span {
+      animation: none;
+      width: 100%;
+      opacity: 0.6;
+    }
+  }
+
   .flow-title {
     margin-top: 12px;
   }
@@ -275,25 +310,12 @@
   .backup-note {
     margin: 12px 0;
   }
-  .availability {
-    font-size: 12px;
-  }
   .verification {
     padding: 24px 0;
   }
   .verification .progress-track {
     height: 5px;
     margin: 18px 0;
-  }
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .status-row > span:last-child {
-    margin-left: auto;
   }
   .verified {
     text-align: center;

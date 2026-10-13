@@ -8,7 +8,8 @@
   import Dialog from "./lib/Dialog.svelte";
   import SettingsView from "./lib/SettingsView.svelte";
   import ImportView from "./lib/ImportView.svelte";
-  import BookCover from "./lib/BookCover.svelte";
+  import BookDetails from "./lib/BookDetails.svelte";
+  import { EventsOn } from "./wailsjs/runtime/runtime";
   import Icon from "./lib/Icon.svelte";
   import {
     IsVaultConfigurated,
@@ -20,6 +21,18 @@
     ListBooks,
     ListShelves,
     ImportBook,
+    ListImportFiles,
+    ChangePassword,
+    ImportEdition,
+    CreateShelf,
+    RenameShelf,
+    DeleteShelf,
+    SetBookShelves,
+    DeleteBook,
+    ChooseExportPath,
+    ExportOriginal,
+    SetAutoLockMinutes,
+    Touch,
   } from "./wailsjs/go/app/App";
   import {
     fromCatalog,
@@ -68,6 +81,10 @@
   let importInitial = "choose";
   let backupInitial = "choose";
   let shelfName = "";
+  let editingShelf = "";
+  let confirmShelfDelete = false;
+  let autoLockMinutes = 20;
+  let lastTouch = 0;
   let theme = "dark";
   let density = "comfortable";
   let view: "grid" | "list" = "grid";
@@ -110,10 +127,24 @@
       fontSize = Math.max(16, Math.min(28, Number(value)));
     if (key === "lineHeight")
       lineHeight = Math.max(1.4, Math.min(1.8, Number(value)));
+    if (key === "autoLockMinutes") {
+      autoLockMinutes = Number(value);
+      if (!preview)
+        void SetAutoLockMinutes(autoLockMinutes).catch(() =>
+          notify("Не удалось изменить автоблокировку."),
+        );
+    }
     try {
       localStorage.setItem(
         "mut.appearance",
-        JSON.stringify({ theme, density, view, fontSize, lineHeight }),
+        JSON.stringify({
+          theme,
+          density,
+          view,
+          fontSize,
+          lineHeight,
+          autoLockMinutes,
+        }),
       );
     } catch {}
   }
@@ -129,6 +160,11 @@
       );
       theme = settings.theme === "light" ? "light" : "dark";
       density = settings.density === "compact" ? "compact" : "comfortable";
+      autoLockMinutes = [0, 5, 10, 20, 60, 120].includes(
+        settings.autoLockMinutes,
+      )
+        ? settings.autoLockMinutes
+        : 20;
       view = settings.view === "list" ? "list" : "grid";
       fontSize = [16, 18, 20, 22, 24, 26, 28].includes(settings.fontSize)
         ? settings.fontSize
@@ -139,7 +175,14 @@
     } catch {}
     if (preview) showPreview(previewName);
     else void initialize();
-    return () => clearTimeout(toastTimer);
+    const cancel =
+      !preview && (window as unknown as { runtime?: unknown }).runtime
+        ? EventsOn("vault:locked", clearSession)
+        : () => {};
+    return () => {
+      clearTimeout(toastTimer);
+      cancel();
+    };
   });
   async function initialize() {
     try {
@@ -156,6 +199,7 @@
           "Не удалось получить стандартные папки. Используются пути этой сборки.",
         );
       }
+      await SetAutoLockMinutes(autoLockMinutes);
       paths = loadSavedPaths(defaults, pathStorageKey);
       path = paths.library;
       if (await IsUnlocked()) {
@@ -248,19 +292,40 @@
   async function lockVault() {
     try {
       if (!preview) await Lock();
-      session++;
-      screen = "login";
-      overlay = null;
-      books = [];
-      shelves = [];
-      selectedBook = null;
-      recoveryKey = "";
-      errorMessage = "";
+      clearSession();
     } catch {
       notify("Не удалось заблокировать архив. Попробуйте ещё раз.");
     }
   }
-  async function importFile(filePath: string) {
+  function clearSession() {
+    session++;
+    screen = "login";
+    overlay = null;
+    books = [];
+    shelves = [];
+    selectedBook = null;
+    recoveryKey = "";
+    errorMessage = "";
+  }
+  function activity() {
+    if (preview) return;
+    const now = Date.now();
+    if (now - lastTouch > 15000) {
+      lastTouch = now;
+      void Touch();
+    }
+  }
+  function readingProgress(id: string, progress: number, locator: string) {
+    books = books.map((book) =>
+      book.id === id
+        ? { ...book, progress, locator, updatedAt: new Date().toISOString() }
+        : book,
+    );
+  }
+  async function refresh() {
+    if (!preview) await loadLibrary();
+  }
+  async function importFile(filePath: string, keepDuplicate = false) {
     if (preview) {
       const filename = filePath.split("/").at(-1) || "Книга";
       const id =
@@ -282,8 +347,7 @@
         },
       ];
     } else {
-      await ImportBook(filePath);
-      await loadLibrary();
+      await ImportEdition(filePath, keepDuplicate);
     }
   }
   function openBook(book: Book) {
@@ -377,15 +441,95 @@
       backupInitial = name === "restored" ? "done" : "choose";
     }
   }
-  function createShelf() {
-    if (!shelfName.trim() || !preview) return;
+  async function createShelf() {
     const name = shelfName.trim();
-    if (!shelves.includes(name)) shelves = [...shelves, name];
-    shelfName = "";
+    if (!name || busy) return;
+    busy = true;
+    errorMessage = "";
+    try {
+      if (preview) {
+        if (!shelves.includes(name)) shelves = [...shelves, name];
+      } else {
+        await CreateShelf(name);
+        await loadLibrary();
+      }
+      shelfName = "";
+      overlay = null;
+    } catch {
+      errorMessage =
+        "Не удалось создать полку. Проверьте название и доступ к диску.";
+    } finally {
+      busy = false;
+    }
+  }
+  function manageShelf(name: string) {
+    editingShelf = name;
+    shelfName = name;
+    confirmShelfDelete = false;
+    errorMessage = "";
+    overlay = "manageshelf";
+  }
+  async function changeShelf(remove = false) {
+    busy = true;
+    errorMessage = "";
+    try {
+      if (preview) {
+        shelves = remove
+          ? shelves.filter((s) => s !== editingShelf)
+          : shelves.map((s) => (s === editingShelf ? shelfName : s));
+        books = books.map((b) => ({
+          ...b,
+          shelves: remove
+            ? b.shelves.filter((s) => s !== editingShelf)
+            : b.shelves.map((s) => (s === editingShelf ? shelfName : s)),
+        }));
+      } else {
+        if (remove) await DeleteShelf(editingShelf);
+        else await RenameShelf(editingShelf, shelfName);
+        await loadLibrary();
+      }
+      overlay = null;
+    } catch {
+      errorMessage = "Не удалось изменить полку.";
+    } finally {
+      busy = false;
+    }
+  }
+  async function saveShelves(chosen: string[]) {
+    if (!selectedBook) return;
+    if (preview) {
+      selectedBook.shelves = chosen;
+      books = [...books];
+    } else {
+      await SetBookShelves(selectedBook.id, chosen);
+      await refresh();
+    }
+  }
+  async function exportBook() {
+    if (!selectedBook) return;
+    if (preview) {
+      notify("Экспорт доступен в desktop-приложении.");
+      return;
+    }
+    const destination = await ChooseExportPath(selectedBook.id);
+    if (!destination) return;
+    await ExportOriginal(selectedBook.id, destination);
+    notify("Оригинал экспортирован в выбранную папку.");
+  }
+  async function removeBook() {
+    if (!selectedBook) return;
+    const id = selectedBook.id;
+    if (preview) books = books.filter((b) => b.id !== id);
+    else {
+      await DeleteBook(id);
+      await refresh();
+    }
     overlay = null;
+    selectedBook = null;
   }
 </script>
 
+<svelte:window on:pointerdown={activity} on:keydown={activity} />
 <div class="app-root">
   {#if !ready}<main class="loading-screen">
       <Icon name="book" size={32} />
@@ -433,6 +577,8 @@
         onsettings={() => (overlay = "settings")}
         onsecurity={() => (overlay = "security")}
         onchange={preference}
+        onprogress={readingProgress}
+        onbookmarks={(id, bookmarks) => { books = books.map(book => book.id === id ? {...book, bookmarks} : book); }}
       />{/key}
   {:else if screen === "backup" || screen === "restore"}{#key screen + backupInitial}<BackupView
         restore={screen === "restore"}
@@ -449,6 +595,12 @@
         onbrowse={chooseDirectory}
         onback={() => (screen = flowReturn)}
         onrestore={openRestore}
+        onrestored={(value) => {
+          if (flowReturn === "login" || flowReturn === "create") {
+            updatePath("library", value);
+            flowReturn = "login";
+          }
+        }}
       />{/key}
   {:else}<LibraryView
       {books}
@@ -466,6 +618,11 @@
       onbackups={openBackup}
       onsecurity={() => (overlay = "security")}
       onopen={openBook}
+      ondetails={(book) => {
+        selectedBook = book;
+        overlay = "book";
+      }}
+      onmanageshelf={manageShelf}
     />{/if}
   {#if overlay === "settings"}<Dialog
       title="Настройки mut"
@@ -478,10 +635,18 @@
         {density}
         {fontSize}
         {lineHeight}
+        {autoLockMinutes}
         {books}
         {path}
         onchange={preference}
         onbackup={openBackup}
+        onpasswordchange={async (oldPassword, newPassword) => {
+          if (preview) {
+            notify("Смена пароля доступна в приложении.");
+            return;
+          }
+          await ChangePassword(oldPassword, newPassword);
+        }}
       /></Dialog
     >
   {:else if overlay === "import"}<Dialog
@@ -500,6 +665,9 @@
         onpathchange={(value) => updatePath("imports", value)}
         onbrowse={chooseDirectory}
         onselectfiles={selectImportFiles}
+        onselectfolder={() =>
+          preview ? Promise.resolve([]) : ListImportFiles(paths.imports)}
+        oncomplete={refresh}
         onimport={importFile}
         onclose={() => (overlay = null)}
       /></Dialog
@@ -510,30 +678,16 @@
         overlay = null;
         selectedBook = null;
       }}
-      ><div class="book-detail">
-        <div class="detail-cover"><BookCover book={selectedBook} /></div>
-        <div class="detail-info">
-          <span class="eyebrow"
-            >{selectedBook.format} · {formatSize(selectedBook.size)}</span
-          >
-          <h1>{selectedBook.title}</h1>
-          <p class="muted">{selectedBook.author}</p>
-          <div class="notice">
-            <strong>Нет встроенного чтения</strong>
-            <p>
-              Файл сохранён в архиве. Его можно будет экспортировать и открыть в
-              подходящей программе.
-            </p>
-          </div>
-          <small class="muted filename">{selectedBook.originalName}</small
-          ><button class="secondary" disabled
-            ><Icon name="upload" size={16} /> Экспортировать оригинал</button
-          ><small class="muted"
-            >Экспорт пока недоступен. Он создаст незашифрованный файл в
-            выбранной папке.</small
-          >
-        </div>
-      </div></Dialog
+      ><BookDetails
+        book={selectedBook}
+        {shelves}
+        onread={() => {
+          if (selectedBook) openBook(selectedBook);
+        }}
+        onsave={saveShelves}
+        onexport={exportBook}
+        ondelete={removeBook}
+      /></Dialog
     >
   {:else if overlay === "shelf"}<Dialog
       title="Новая полка"
@@ -547,16 +701,41 @@
             maxlength="80"
             required
           /></label
-        >{#if !preview}<p class="muted">Создание полок пока недоступно.</p>{/if}
+        >{#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
         <div class="footer-row">
           <button
             type="button"
             class="secondary"
             on:click={() => (overlay = null)}>Отмена</button
-          ><button class="primary" disabled={!shelfName.trim() || !preview}
+          ><button class="primary" disabled={!shelfName.trim() || busy}
             >Создать полку <Icon name="plus" size={16} /></button
           >
         </div>
+      </form></Dialog
+    >
+  {:else if overlay === "manageshelf"}<Dialog
+      title="Изменить полку"
+      onclose={() => (overlay = null)}
+      ><form class="stack" on:submit|preventDefault={() => changeShelf()}>
+        <label class="field"
+          ><span>Название полки</span><input
+            bind:value={shelfName}
+            required
+            maxlength="80"
+          /></label
+        >{#if errorMessage}<p class="error" role="alert">
+            {errorMessage}
+          </p>{/if}<button class="primary" disabled={busy || !shelfName.trim()}
+          >Сохранить</button
+        ><label class="check"
+          ><input type="checkbox" bind:checked={confirmShelfDelete} /> Удалить полку,
+          сохранив книги</label
+        ><button
+          class="secondary"
+          type="button"
+          disabled={!confirmShelfDelete || busy}
+          on:click={() => changeShelf(true)}>Удалить полку</button
+        >
       </form></Dialog
     >
   {:else if overlay === "security"}<Dialog
@@ -661,38 +840,6 @@
     z-index: 40;
     max-width: calc(100vw - 40px);
   }
-  .book-detail {
-    display: flex;
-    gap: 24px;
-    align-items: flex-start;
-  }
-  .detail-cover {
-    width: 160px;
-    flex-shrink: 0;
-  }
-  .detail-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  .detail-info h1 {
-    font-size: 25px;
-  }
-  .detail-info .notice {
-    padding: 14px;
-  }
-  .detail-info .notice p {
-    font-size: 12px;
-  }
-  .detail-info small {
-    font-size: 10px;
-  }
-  .filename {
-    overflow-wrap: anywhere;
-    user-select: text;
-  }
   .security-status {
     display: flex;
     align-items: center;
@@ -707,19 +854,6 @@
     font-size: 12px;
   }
   @media (max-width: 550px) {
-    .book-detail {
-      flex-direction: column;
-    }
-    .detail-cover {
-      width: 120px;
-      align-self: center;
-    }
-    .detail-cover :global(.book-cover) {
-      height: 160px;
-    }
-    .detail-cover :global(.cover-title) {
-      font-size: 16px;
-    }
     .preview-control {
       bottom: 10px;
     }
