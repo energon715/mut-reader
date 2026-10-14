@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=mut
+Comment=Local encrypted book library
+Exec=mut
+Icon=mut
+Terminal=false
+Categories=Office;Viewer;
+StartupWMClass=mut

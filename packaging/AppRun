@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+APPDIR=${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
+export APPDIR
+export WEBKIT_FORCE_SANDBOX=1
+export LD_PRELOAD="$APPDIR/usr/lib/libmut-webkit-relocate.so${LD_PRELOAD:+:$LD_PRELOAD}"
+export GIO_USE_PROXY_RESOLVER=dummy
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders:$APPDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
+export GIO_EXTRA_MODULES="$APPDIR/usr/lib/gio/modules"
+export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders"
+export GDK_PIXBUF_MODULE_FILE="$APPDIR/usr/lib/gdk-pixbuf-2.0/loaders.cache"
+export GST_PLUGIN_SYSTEM_PATH_1_0="$APPDIR/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SCANNER_1_0="$APPDIR/usr/libexec/gst-plugin-scanner"
+export WEBKIT_EXEC_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
+export WEBKIT_INJECTED_BUNDLE_PATH="$APPDIR/usr/lib/webkit2gtk-4.1/injected-bundle"
+export PATH="$APPDIR/usr/bin:$PATH"
+# The WebKit sandbox remains enabled; helper binaries must match the bundled engine.
+case "${1:-}" in
+    --vaultctl) shift; exec "$APPDIR/usr/bin/vaultctl" "$@" ;;
+    *)
+        for helper in /usr/bin/bwrap /usr/bin/xdg-dbus-proxy; do
+            [ -x "$helper" ] || { echo "mut AppImage requires bubblewrap and xdg-dbus-proxy for the WebKit sandbox. Install them with your distribution package manager." >&2; exit 1; }
+        done
+        exec "$APPDIR/usr/bin/mut" "$@" ;;
+esac

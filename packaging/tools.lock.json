@@ -1,0 +1,37 @@
+{
+  "ubuntu-base": {
+    "file": "ubuntu-base-24.04.5-base-amd64.tar.gz",
+    "url": "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-amd64.tar.gz",
+    "sha256": "e77b6f10c2590cef872b33ee9f635a0e3fd1f57fb074c0e52b5c7f56147a0c86"
+  },
+  "go": {
+    "file": "go1.27.2.linux-amd64.tar.gz",
+    "url": "https://go.dev/dl/go1.27.2.linux-amd64.tar.gz",
+    "sha256": "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5"
+  },
+  "node": {
+    "file": "node-v24.21.0-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+    "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+  },
+  "linuxdeploy": {
+    "file": "linuxdeploy-x86_64.AppImage",
+    "url": "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage",
+    "sha256": "8aea8da0f7f7039d2a2cecb14657d752a222a5e1d3825caeef186c82f751cdd1"
+  },
+  "appimagetool": {
+    "file": "appimagetool-x86_64.AppImage",
+    "url": "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage",
+    "sha256": "95cbe7cce9717fce90c484e34052ee7c7f1d7635b33c12525b4776826a7d29b6"
+  },
+  "runtime": {
+    "file": "runtime-x86_64",
+    "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
+    "sha256": "156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074"
+  },
+  "debian-base": {
+    "file": "debian-trixie-slim.tar.gz",
+    "url": "https://raw.githubusercontent.com/debuerreotype/docker-debian-artifacts/a3751996111ce2c1c904050c84440184535e23b1/trixie/slim/oci/blobs/rootfs.tar.gz",
+    "sha256": "ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e"
+  }
+}

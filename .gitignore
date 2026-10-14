@@ -4,3 +4,5 @@
 /.vscode/
 *.prof
 coverage.out
+__pycache__/
+*.pyc

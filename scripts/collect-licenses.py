@@ -30,6 +30,6 @@ for key,pkg in lock['packages'].items():
    if p.is_file() and p.name.upper().startswith(('LICENSE','NOTICE')):shutil.copy2(p,out/(pathlib.Path(key).name+'-'+p.name))
 (out/'frontend-packages.json').write_text(json.dumps(packages,indent=2)+'\n')
 shutil.copy2(pathlib.Path(subprocess.check_output(['go','env','GOROOT'],text=True).strip())/'LICENSE',out/'Go-LICENSE')
-(out/'NOTICE.txt').write_text('mut is MPL-2.0. PDF.js is Apache-2.0. Svelte is MIT. Fonts are SIL OFL 1.1.\nGo and frontend dependency versions are included in JSON.\nSystem GTK/WebKit libraries are dynamically linked and supplied by the OS.\n')
+(out/'NOTICE.txt').write_text('mut is MPL-2.0. PDF.js is Apache-2.0. Svelte is MIT. Fonts are SIL OFL 1.1.\nGo and frontend dependency versions are included in JSON.\nGTK/WebKit libraries are dynamically linked. DEB uses system libraries; AppImage includes runtime notices and versions in licenses/system.\n')
 if missing:raise SystemExit('Missing root license notices: '+', '.join(missing))
 print('Collected licenses for',len(modules)-1,'Go modules and frontend runtime')

@@ -26,3 +26,32 @@ for source in sources:
   for name in ['usr/share/applications/mut.desktop','usr/share/doc/mut/LICENSE','usr/share/doc/mut/RECOVERY.md','usr/share/doc/mut/format-v1.md','usr/share/doc/mut/licenses/go/Go-LICENSE']:
    assert name in files
 print('PASS deb structure, both archives, exact binary hashes, licenses and docs')
+
+# Inspect the actual AppImage, including its payload rather than just the staging directory.
+import subprocess,tempfile
+appimage=out/f'mut-{version}-linux-x86_64.AppImage'
+if appimage.exists():
+ with tempfile.TemporaryDirectory(prefix='mut-appimage-check-') as temp:
+  subprocess.run([str(appimage),'--appimage-extract'],cwd=temp,stdout=subprocess.DEVNULL,check=True)
+  app=pathlib.Path(temp)/'squashfs-root'
+  assert (app/'AppRun').is_file() and not (app/'AppRun').is_symlink()
+  for name in ['mut','vaultctl']:
+   binary=app/'usr/bin'/name
+   assert binary.read_bytes()[:5]==b'\x7fELF\x02'
+   assert subprocess.check_output(['go','tool','buildid',str(binary)]).strip()==subprocess.check_output(['go','tool','buildid',str(root/'build/bin'/name)]).strip(), 'Wrong packaged Go binary: '+name
+  for name in ['WebKitWebProcess','WebKitNetworkProcess','WebKitGPUProcess']:
+   assert (app/'usr/lib/x86_64-linux-gnu/webkit2gtk-4.1'/name).is_file()
+  for name in ['usr/lib/libmut-webkit-relocate.so','usr/share/glib-2.0/schemas/gschemas.compiled','usr/share/doc/mut/licenses/system/packages.json']:
+   assert (app/name).is_file()
+  runtime=json.loads((app/'usr/share/doc/mut/licenses/system/packages.json').read_text())
+  assert any(p['package']=='libwebkit2gtk-4.1-0' and tuple(map(int,p['version'].split('-',1)[0].split('.')[:2])) >= (2,54) for p in runtime)
+  assert b'WEBKIT_FORCE_SANDBOX=1' in (app/'AppRun').read_bytes()
+  assert b'DISABLE_SANDBOX' not in (app/'AppRun').read_bytes()
+  cli=subprocess.check_output([str(app/'AppRun'),'--vaultctl','--help'],text=True)
+  assert 'offline management' in cli
+ print('PASS actual AppImage payload, x86-64 Go build IDs, matching WebKit helpers, sandbox launcher, licenses and CLI')
+for line in (out/'SHA256SUMS').read_text().splitlines():
+ checksum,name=line.split('  ',1)
+ assert pathlib.Path(name).name==name
+ assert hashlib.sha256((out/name).read_bytes()).hexdigest()==checksum
+print('PASS release checksums')
