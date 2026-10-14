@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import PdfPage from "./PdfPage.svelte";
   import { chapters, readingText } from "./demo";
@@ -42,6 +42,13 @@
   let disposed = false;
   let marks = [...book.bookmarks];
   let saveQueue = Promise.resolve();
+  let readingArea: HTMLElement;
+  let pageInput = 1;
+  let bookmarkMessage = "";
+  let bookmarkError = "";
+  $: pageInput = page;
+  let orderedMarks: string[] = [];
+  $: if (pages && total) orderedMarks = [...marks].sort((a, b) => (markPage(a) || Infinity) - (markPage(b) || Infinity));
   $: isPdf = book.format === "PDF";
   $: progress = Math.round((page / total) * 100);
   $: locator = isPdf
@@ -141,9 +148,14 @@
       });
   }
   function go(next: number) {
-    page = Math.max(1, Math.min(total, next));
+    if (!Number.isFinite(next)) { pageInput = page; return; }
+    page = Math.max(1, Math.min(total, Math.trunc(next)));
+    pageInput = page;
     sidebarOpen = false;
+    bookmarkMessage = "";
     persist();
+    // Text pages share DOM nodes; reset scrolling after Svelte updates them.
+    void tick().then(() => { if (!disposed) readingArea?.scrollTo({ top: 0, left: 0 }); });
   }
   function navigate(delta: number) {
     go(page + delta);
@@ -166,14 +178,18 @@
   async function updateMarks(next: string[]) {
     if (bookmarkBusy) return;
     bookmarkBusy = true;
+    bookmarkError = "";
+    const added = next.find(mark => !marks.includes(mark));
     try {
       if (!preview) await SaveBookmarks(book.id, next);
       if (!disposed) {
         marks = next;
         onbookmarks(book.id, next);
+        bookmarkMessage = added ? "Закладка добавлена" : "Закладка удалена";
+        if (added) { tab = "marks"; sidebarOpen = true; }
       }
     } catch {
-      if (!disposed) error = "Не удалось сохранить закладку.";
+      if (!disposed) bookmarkError = "Не удалось сохранить закладку. Попробуйте ещё раз.";
     } finally { bookmarkBusy = false; }
   }
   async function bookmark() {
@@ -183,26 +199,46 @@
       : [...marks, value];
     await updateMarks(next);
   }
-  function markPage(mark: string) {
-    if (isPdf) return Number(mark.split(":")[2]) || 1;
-    const p = mark.split(":");
-    return (
-      pages.findIndex(
-        (item) => item.chapter === Number(p[2]) && item.start === Number(p[3]),
-      ) + 1 || 1
-    );
+  function markPage(mark: string): number | null {
+    const parts = mark.split(":");
+    if (parts[0] !== "v1") return null;
+    if ((isPdf && parts[1] === "pdf") || (preview && parts[1] === "demo")) {
+      const value = Number(parts[2]);
+      return Number.isInteger(value) && value >= 1 && value <= total ? value : null;
+    }
+    if (parts[1] !== "text" || parts.length !== 4) return null;
+    const found = pages.findIndex(item => item.chapter === Number(parts[2]) && item.start === Number(parts[3]));
+    return found >= 0 ? found + 1 : null;
+  }
+  function markTitle(mark: string) {
+    const index = markPage(mark);
+    return index ? (isPdf ? "Страница " : "Часть ") + index : "Позиция недоступна";
+  }
+  function markDescription(mark: string) {
+    const index = markPage(mark);
+    if (!index) return "Закладка из другой версии книги";
+    if (isPdf) return "PDF · нажмите, чтобы перейти";
+    return preview ? chapters[index - 1] || "" : pages[index - 1]?.title || "";
+  }
+  function openBookmarks() {
+    tab = "marks";
+    sidebarOpen = true;
   }
   function shortcut(e: KeyboardEvent) {
     if (
       window.document.querySelector("dialog[open]") ||
       e.target instanceof HTMLInputElement ||
-      e.target instanceof HTMLSelectElement
+      e.target instanceof HTMLSelectElement ||
+      e.target instanceof HTMLTextAreaElement ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable) ||
+      e.altKey || e.ctrlKey || e.metaKey || loading || Boolean(error)
     )
       return;
-    if (e.key === "ArrowRight") navigate(1);
-    if (e.key === "ArrowLeft") navigate(-1);
+    if (e.key === "ArrowRight") { e.preventDefault(); navigate(1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); navigate(-1); }
     if (e.key === "Escape") {
       if (appearance) appearance = false;
+      else if (sidebarOpen) sidebarOpen = false;
       else void leave();
     }
   }
@@ -224,12 +260,15 @@
         on:click={() => (sidebarOpen = !sidebarOpen)}
         ><Icon name="list" /></button
       ><button
-        class="icon-button"
+        class="bookmark-toggle"
         class:marked={bookmarked}
         aria-pressed={bookmarked}
-        aria-label="Поставить закладку"
+        aria-label={bookmarked ? "Удалить закладку с текущей страницы" : "Добавить закладку на текущую страницу"}
+        title={bookmarked ? "Удалить закладку с текущей страницы" : "Сохранить текущую страницу в закладках"}
         disabled={loading || Boolean(error) || bookmarkBusy}
-        on:click={bookmark}><Icon name="bookmark" /></button
+        on:click={bookmark}><Icon name={bookmarked ? "check" : "bookmark"} /><span>{bookmarkBusy ? "Сохраняем…" : bookmarked ? "В закладках" : "Добавить закладку"}</span></button
+      ><button class="bookmarks-toggle" aria-label="Открыть список закладок" on:click={openBookmarks}
+        ><Icon name="list" /><span>Закладки</span><span class="bookmark-count">{marks.length}</span></button
       ><button
         class="icon-button"
         aria-label={isPdf ? "Уменьшить масштаб" : "Уменьшить текст"}
@@ -260,11 +299,13 @@
         <div class="toc-tabs">
           <button
             class:active={tab === "contents"}
+            aria-pressed={tab === "contents"}
             on:click={() => (tab = "contents")}>Оглавление</button
           ><button
             class:active={tab === "marks"}
-            on:click={() => (tab = "marks")}>Закладки</button
-          >
+            aria-pressed={tab === "marks"}
+            on:click={() => (tab = "marks")}>Закладки ({marks.length})</button
+          ><button class="sidebar-close icon-button" aria-label="Закрыть оглавление и закладки" on:click={() => (sidebarOpen = false)}><Icon name="close" size={16} /></button>
         </div>
         <div class="hairlines" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="toc-scroll">
@@ -272,18 +313,18 @@
                 class="chapter"
                 class:active={chapter.page === page}
                 on:click={() => go(chapter.page)}>{chapter.title}</button
-              >{/each}{:else}{#each marks as mark}<div class="row">
-                <button class="chapter" on:click={() => go(markPage(mark))}
-                  >Страница {markPage(mark)}</button
-                ><button
-                  class="text-button"
-                  aria-label="Удалить закладку"
-                  disabled={bookmarkBusy}
-                  on:click={() => updateMarks(marks.filter((m) => m !== mark))}><Icon name="close" size={14} /></button
-                >
-              </div>{/each}{#if !marks.length}<p class="toc-empty">
-                Поставьте закладку, чтобы вернуться к важному.
-              </p>{/if}{/if}
+              >{/each}{:else}<p class="bookmark-help">Сохраняйте текущую {isPdf ? "страницу" : "часть"} кнопкой «Добавить закладку». Нажмите на закладку, чтобы вернуться.</p>
+            {#each orderedMarks as mark}<div class="bookmark-row" class:current={mark === locator}>
+                <button class="bookmark-link" aria-label={"Открыть закладку: " + markTitle(mark)} disabled={markPage(mark) === null}
+                  on:click={() => go(markPage(mark)!)}>
+                  <strong>{markTitle(mark)}{#if mark === locator}<span class="current-mark">Сейчас</span>{/if}</strong>
+                  <small>{markDescription(mark)}</small>
+                </button>
+                <button class="icon-button remove-bookmark" title="Удалить закладку" aria-label={"Удалить закладку: " + markTitle(mark)}
+                  disabled={bookmarkBusy} on:click={() => updateMarks(marks.filter(m => m !== mark))}><Icon name="close" size={16} /></button>
+              </div>{/each}
+            {#if !marks.length}<p class="toc-empty">Здесь появятся сохранённые страницы. Позиция чтения запоминается автоматически, даже без закладки.</p>{/if}
+          {/if}
         </div>
       </div>
       <div class="panel reading-progress">
@@ -298,7 +339,8 @@
         ><Icon name="lock" size={14} /> Защита архива</button
       >
     </aside>
-    <main class="reading-area">
+    <div class="reader-content">
+    <main class="reading-area" bind:this={readingArea}>
       {#if loading}<p class="muted" role="status">
           Открываем книгу…
         </p>{:else if error}<div class="reader-placeholder">
@@ -350,26 +392,23 @@
                       {block.text}
                     </p>{/if}{/each}{/if}
             </div>{/if}
-          <footer class="page-footer">
-            <button on:click={() => navigate(-1)} disabled={page === 1}
-              >Предыдущая страница</button
-            ><label class="page-jump"
-              ><input
-                type="number"
-                min="1"
-                max={total}
-                value={page}
-                aria-label="Перейти к странице"
-                on:change={(e) => go(Number(e.currentTarget.value))}
-              /><span> / {total}</span></label
-            ><button on:click={() => navigate(1)} disabled={page === total}
-              >Следующая страница</button
-            >
-          </footer>
         </article>{/if}{#if preview}<small class="reader-preview"
           >Демонстрационный текст · {book.format}</small
         >{/if}
     </main>
+    <div class="reader-feedback" role="status" aria-live="polite">{bookmarkMessage}</div>
+    {#if bookmarkError}<p class="error bookmark-error" role="alert">{bookmarkError}</p>{/if}
+    <nav class="page-navigation panel" aria-label="Переход между страницами">
+      <button class="page-turn" aria-label="Предыдущая страница" title="Предыдущая страница · ←" disabled={loading || Boolean(error) || page <= 1} on:click={() => navigate(-1)}><Icon name="back" /><span>Назад</span></button>
+      <form class="page-jump" on:submit|preventDefault={() => go(pageInput)}>
+        <label for="reader-page">{isPdf ? "Страница" : "Часть"}</label>
+        <input id="reader-page" type="number" min="1" max={total} bind:value={pageInput} aria-label="Перейти к странице" disabled={loading || Boolean(error)} />
+        <span>из {total}</span>
+        <button class="jump-submit" type="submit" disabled={loading || Boolean(error)} title="Перейти к указанной странице">Перейти</button>
+      </form>
+      <button class="page-turn" aria-label="Следующая страница" title="Следующая страница · →" disabled={loading || Boolean(error) || page >= total} on:click={() => navigate(1)}><span>Далее</span><Icon name="arrow" /></button>
+    </nav>
+    </div>
   </div>
   {#if appearance}<div class="appearance panel">
       <div class="row spread">
@@ -400,7 +439,8 @@
 
 <style>
   .toc-scroll {
-    max-height: 55vh;
+    flex: 1;
+    min-height: 0;
     overflow: auto;
   }
   .chapter {
@@ -432,11 +472,13 @@
   .page-jump {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
+    font: 12px Onest, sans-serif;
+    color: var(--muted);
   }
   .page-jump input {
     width: 55px;
-    padding: 3px 4px;
+    padding: 7px 8px;
     border-radius: 4px;
     border: 1px solid #64726433;
     color: inherit;
@@ -456,7 +498,8 @@
     gap: 10px;
   }
   .reader-header {
-    height: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 20px;
@@ -509,6 +552,7 @@
     gap: 20px;
   }
   .reader-sidebar {
+    min-height: 0;
     width: 230px;
     flex-shrink: 0;
     display: flex;
@@ -516,6 +560,10 @@
     gap: 10px;
   }
   .contents {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     padding: 12px;
   }
   .toc-tabs {
@@ -579,7 +627,9 @@
   .reading-area {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     overflow: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -590,7 +640,8 @@
     color: var(--ink);
     border-radius: 3px;
     width: min(870px, 100%);
-    min-height: calc(100vh - 126px);
+    min-height: 100%;
+    flex: none;
     padding: 46px 84px 28px;
     display: flex;
     flex-direction: column;
@@ -598,6 +649,7 @@
     box-shadow: 0 6px 28px #0003;
     user-select: text;
   }
+  .reading-page > :global(*) { flex-shrink: 0; }
   .page-eyebrow {
     font-size: 9px;
     display: flex;
@@ -641,32 +693,29 @@
   .prose p {
     margin-bottom: 18px;
   }
-  .page-footer {
-    margin-top: auto;
-    padding-top: 40px;
-    font-size: 10px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    color: #68736a;
-    gap: 16px;
-  }
-  .page-footer button {
-    font: inherit;
-    color: inherit;
-    padding: 5px 0;
-  }
-  .page-footer button:hover {
-    background: transparent;
-    color: var(--ink);
-    text-decoration: underline;
-  }
+  .reader-content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+  .page-navigation { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: var(--raised); }
+  .page-turn { min-height: 42px; padding: 0 16px; border: 1px solid var(--border); border-radius: 12px; font: 500 13px Onest, sans-serif; background: var(--panel); }
+  .page-turn:hover:not(:disabled) { background: var(--active); }
+  .jump-submit { min-height: 36px; padding: 0 10px; border-radius: 8px; font-size: 12px; color: var(--text); background: var(--active); }
+  .reader-feedback { min-height: 0; color: var(--muted); font: 12px Onest, sans-serif; }
+  .reader-feedback:empty { display: none; }
+  .bookmark-error { margin: 0; font: 12px Onest, sans-serif; }
+  .bookmark-toggle, .bookmarks-toggle { height: 40px; flex-shrink: 0; padding: 0 12px; border-radius: 12px; background: var(--raised); font-size: 12px; }
+  .bookmark-count { min-width: 18px; padding: 1px 4px; border-radius: 5px; background: var(--active); font-size: 11px; }
+  .bookmark-help { font-size: 11px; line-height: 1.6; color: var(--muted); margin-bottom: 14px; }
+  .bookmark-row { display: flex; align-items: center; border-radius: 10px; margin-bottom: 6px; }
+  .bookmark-row.current { background: var(--active); }
+  .bookmark-link { flex: 1; min-width: 0; padding: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; border-radius: 10px; }
+  .bookmark-link strong { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; }
+  .bookmark-link small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+  .current-mark { font-size: 9px; color: var(--muted); }
+  .remove-bookmark { width: 30px; height: 30px; margin-right: 4px; flex-shrink: 0; }
   .night {
     background: #262d2b;
     color: #d9dfd6;
   }
-  .night .page-eyebrow,
-  .night .page-footer {
+  .night .page-eyebrow {
     color: #a6b5a4;
   }
   .white {
@@ -738,7 +787,7 @@
     color: var(--quiet);
     font: 9px Onest;
   }
-  .mobile-toc {
+  .mobile-toc, .sidebar-close {
     display: none !important;
   }
   @media (max-width: 1100px) {
@@ -764,7 +813,8 @@
       display: none;
       position: absolute;
       top: 70px;
-      bottom: 16px;
+      bottom: 86px;
+      overflow: auto;
       left: 12px;
       z-index: 10;
       background: var(--bg);
@@ -786,9 +836,10 @@
     .back-library span {
       display: none;
     }
-    .mobile-toc {
+    .mobile-toc, .sidebar-close {
       display: inline-flex !important;
     }
+    .sidebar-close { margin-left: auto; width: 24px; height: 24px; }
     .reader-actions .icon-button {
       width: 32px;
       height: 32px;
@@ -801,18 +852,30 @@
     }
     .reading-page {
       padding: 30px 26px 22px;
-      min-height: calc(100vh - 112px);
+      min-height: 100%;
     }
     .page-eyebrow {
       font-size: 7px;
       letter-spacing: 1px;
     }
-    .page-footer {
-      font-size: 8px;
-    }
+    .page-navigation { gap: 8px; padding: 8px; }
+    .page-turn { padding: 0 10px; font-size: 12px; }
+    .page-jump { gap: 5px; font-size: 11px; }
+    .page-jump input { width: 48px; }
+    .bookmark-toggle, .bookmarks-toggle { height: 32px; padding: 0 8px; }
+    .bookmarks-toggle > span:not(.bookmark-count) { display: none; }
+    .bookmark-toggle { font-size: 11px; }
+    .reader-header { gap: 8px; }
     .reader-title small {
       font-size: 9px;
     }
+  }
+  @media (max-width: 520px) {
+    .reader-title small { display: none; }
+    .bookmark-toggle > span { display: none; }
+    .page-jump label { display: none; }
+    .jump-submit { padding: 0 6px; font-size: 11px; }
+    .page-turn { padding: 0 8px; gap: 4px; }
   }
   @media (max-width: 420px) {
     .reader-title strong {

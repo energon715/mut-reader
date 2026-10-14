@@ -48,11 +48,11 @@ try {
    await c.wait(pdf?'document.querySelector(".textLayer")?.textContent.includes("page one") || document.querySelector(".pdf-wrapper [role=alert]")':has('Author-owned '+b.format.toUpperCase()+' release fixture.'));
    if(await c.evaluate('!!document.querySelector(".pdf-wrapper [role=alert]")'))throw Error('PDF renderer rejected page');
    if(pdf){
-    await click('Следующая страница'); await c.wait('document.querySelector(".textLayer")?.textContent.includes("page two")');
+    await c.evaluate(`document.querySelector(${q('[aria-label="Следующая страница"]')}).click()`); await c.wait('document.querySelector(".textLayer")?.textContent.includes("page two")');
     assert(await c.evaluate(`(()=>{const e=document.querySelector('canvas');const p=e.getContext('2d').getImageData(0,0,e.width,e.height).data;for(let i=0;i<p.length;i+=4)if(p[i]<150&&p[i+1]<150&&p[i+2]<150&&p[i+3]>0)return true;return false})()`),'PDF canvas must have visible ink');
    }
-   await c.evaluate(`document.querySelector(${q('[aria-label="Поставить закладку"]')}).click()`);
-   await c.wait(`document.querySelector(${q('[aria-label="Поставить закладку"]')}).getAttribute('aria-pressed')==='true'`);
+   await c.evaluate(`document.querySelector(${q('.bookmark-toggle')}).click()`);
+   await c.wait(`document.querySelector(${q('.bookmark-toggle')}).getAttribute('aria-pressed')==='true'`);
    const dimensions=await c.evaluate('({width:innerWidth,height:innerHeight})');
    const snap=await c.command('Page.snapshotRect',{x:0,y:0,...dimensions,coordinateSystem:'Viewport'});
    await writeFile(base+'/screenshots/'+b.format+'.png',Buffer.from(snap.dataURL.split(',')[1],'base64'));

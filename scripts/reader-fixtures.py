@@ -19,3 +19,8 @@ xref=len(data); data+=f'xref\n0 {len(offsets)}\n0000000000 65535 f \n'.encode()
 for offset in offsets[1:]: data+=f'{offset:010} 00000 n \n'.encode()
 data+=f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
 (root/'book.pdf').write_bytes(data)
+# Several text pages, each taller than a desktop viewport, for scroll regressions.
+with zipfile.ZipFile(root/'long.epub','w') as z:
+ z.writestr('META-INF/container.xml','<container><rootfiles><rootfile full-path="package.opf"/></rootfiles></container>')
+ z.writestr('package.opf','<package><metadata><title>Long reader fixture</title></metadata><manifest><item id="one" href="one.xhtml"/></manifest><spine><itemref idref="one"/></spine></package>')
+ z.writestr('one.xhtml','<html><body><h1>Long reader chapter</h1>'+''.join('<p>Paragraph '+str(i)+'. '+('Author-owned long reading fixture. '*10)+'</p>' for i in range(80))+'</body></html>')
