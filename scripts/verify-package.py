@@ -55,3 +55,26 @@ for line in (out/'SHA256SUMS').read_text().splitlines():
  assert pathlib.Path(name).name==name
  assert hashlib.sha256((out/name).read_bytes()).hexdigest()==checksum
 print('PASS release checksums')
+
+sources=out/f'mut-{version}-runtime-sources.tar.gz'
+if sources.exists():
+ import re
+ hashes={};descriptions=[];source_inventory=None
+ with tarfile.open(sources,mode='r|gz') as t:
+  for member in t:
+   assert member.isfile() and not member.name.startswith('/') and '..' not in pathlib.PurePosixPath(member.name).parts
+   stream=t.extractfile(member);name=pathlib.PurePosixPath(member.name).name
+   if name.endswith('.dsc') or name=='runtime-packages.json':
+    content=stream.read();digest=hashlib.sha256(content).hexdigest()
+    if name.endswith('.dsc'):descriptions.append(content.decode())
+    else:source_inventory=json.loads(content)
+   else:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+   hashes[name]=(digest,member.size)
+ for description in descriptions:
+  match=re.search(r'Checksums-Sha256:\n((?:[ \t].*\n)+)',description);assert match
+  for line in match[1].splitlines():
+   digest,size,name=line.split();assert hashes[name]==(digest,int(size)), 'Source checksum mismatch: '+name
+ expected=json.loads((root/'build/appimage/mut.AppDir/usr/share/doc/mut/licenses/system/packages.json').read_text())
+ assert {(p['package'],p['version']) for p in source_inventory}=={(p['package'],p['version']) for p in expected}
+ assert len(descriptions)==len({(p['source'],p['sourceVersion']) for p in expected})
+ print('PASS corresponding runtime source inventory and all Debian source checksums')
