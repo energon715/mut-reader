@@ -626,6 +626,7 @@
     />{/if}
   {#if overlay === "settings"}<Dialog
       title="Настройки mut"
+      animateClose
       subtitle="Ваша библиотека · оформление сохраняется автоматически"
       wide
       anchored

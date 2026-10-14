@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import ChoiceMenu from "./ChoiceMenu.svelte";
   import { formatSize, type Book } from "./ui";
   export let theme = "dark";
   export let density = "comfortable";
@@ -69,14 +70,7 @@
             >Комфортный свет для вашей библиотеки</small
           >
         </div>
-        <select
-          id="theme"
-          value={theme}
-          on:change={(e) => onchange("theme", e.currentTarget.value)}
-          ><option value="dark">Тёмное</option><option value="light"
-            >Светлое</option
-          ></select
-        >
+        <ChoiceMenu id="theme" label="Оформление" value={theme} options={[{value:"dark", label:"Тёмное", description:"Мягкий свет для вечернего чтения"}, {value:"light", label:"Светлое", description:"Светлый фон библиотеки"}]} onchange={value => onchange("theme", value)} />
       </div>
       <div class="setting">
         <div>
@@ -84,14 +78,7 @@
             >Больше книг или больше пространства</small
           >
         </div>
-        <select
-          id="density"
-          value={density}
-          on:change={(e) => onchange("density", e.currentTarget.value)}
-          ><option value="comfortable">Свободная</option><option value="compact"
-            >Компактная</option
-          ></select
-        >
+        <ChoiceMenu id="density" label="Плотность обложек" value={density} options={[{value:"comfortable", label:"Свободная", description:"Больше пространства между книгами"}, {value:"compact", label:"Компактная", description:"Больше книг на экране"}]} onchange={value => onchange("density", value)} />
       </div>
       <div class="setting">
         <div>
@@ -107,15 +94,7 @@
             >После отсутствия действий в приложении</small
           >
         </div>
-        <select
-          id="auto-lock"
-          value={autoLockMinutes}
-          on:change={(e) =>
-            onchange("autoLockMinutes", Number(e.currentTarget.value))}
-          >{#each [0, 5, 10, 20, 60, 120] as minutes}<option value={minutes}
-              >{minutes ? minutes + " мин" : "Выключена"}</option
-            >{/each}</select
-        >
+        <ChoiceMenu id="auto-lock" label="Автоблокировка" value={autoLockMinutes} options={[0,5,10,20,60,120].map(value => ({value, label:value ? value + " мин" : "Выключена", description:value ? "После отсутствия действий" : "Архив открыт до ручной блокировки"}))} onchange={value => onchange("autoLockMinutes", value)} />
       </div>
     {:else if tab === "reading"}<h3>Чтение</h3>
       <p class="muted section-desc">Настройки страницы для EPUB и FB2</p>
@@ -125,14 +104,7 @@
             >От 16 до 28 пикселей</small
           >
         </div>
-        <select
-          id="font-size"
-          value={fontSize}
-          on:change={(e) => onchange("fontSize", Number(e.currentTarget.value))}
-          >{#each [16, 18, 20, 22, 24, 26, 28] as size}<option value={size}
-              >{size} px</option
-            >{/each}</select
-        >
+        <ChoiceMenu id="font-size" label="Размер текста" value={fontSize} options={[16,18,20,22,24,26,28].map(value => ({value, label:value + " px", sampleSize:value, description:value === 20 ? "Стандартный размер" : value < 20 ? "Больше текста на странице" : "Крупнее и легче читать"}))} onchange={value => onchange("fontSize", value)} />
       </div>
       <div class="setting">
         <div>
@@ -140,15 +112,7 @@
             >Расстояние между строками</small
           >
         </div>
-        <select
-          id="line-height"
-          value={lineHeight}
-          on:change={(e) =>
-            onchange("lineHeight", Number(e.currentTarget.value))}
-          ><option value={1.4}>Плотный</option><option value={1.5}
-            >Обычный</option
-          ><option value={1.8}>Свободный</option></select
-        >
+        <ChoiceMenu id="line-height" label="Межстрочный интервал" value={lineHeight} options={[{value:1.4,label:"Плотный",description:"Компактное расположение строк"},{value:1.5,label:"Обычный",description:"Сбалансированный интервал"},{value:1.8,label:"Свободный",description:"Больше воздуха между строками"}]} onchange={value => onchange("lineHeight", value)} />
       </div>
       <div
         class="reading-sample"
@@ -183,7 +147,7 @@
           ><span>Текущий пароль</span><input
             bind:value={oldPassword}
             type="password"
-            autocomplete="current-password"
+            autocomplete="off"
             required
           /></label
         ><label class="field"
@@ -191,14 +155,14 @@
             bind:value={newPassword}
             type="password"
             minlength="8"
-            autocomplete="new-password"
+            autocomplete="off"
             required
           /></label
         ><label class="field"
           ><span>Повторите новый пароль</span><input
             bind:value={confirmation}
             type="password"
-            autocomplete="new-password"
+            autocomplete="off"
             required
           /></label
         ><button
@@ -303,13 +267,6 @@
     color: var(--quiet);
     margin-top: 4px;
   }
-  .setting select {
-    width: 155px;
-    padding: 9px 11px;
-    font-size: 12px;
-    border-radius: 10px;
-    background: var(--panel);
-  }
   .privacy {
     margin-top: 24px;
     padding: 16px;
@@ -368,9 +325,6 @@
     }
     section {
       padding: 22px;
-    }
-    .setting select {
-      width: 128px;
     }
     .setting small {
       max-width: 200px;

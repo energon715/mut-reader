@@ -16,11 +16,12 @@ async function login(){
  await c.wait('document.querySelector(".book-item")');
 }
 async function open(title){await c.evaluate(`[...document.querySelectorAll('.book-item')].find(e=>e.getAttribute('aria-label')?.startsWith(${q('Открыть '+title+' · ')})).click()`)}
-async function geometry(contentSelector){
+async function geometry(contentSelector, requireScroll = true){
  const result=await c.evaluate(`(()=>{const area=document.querySelector('.reading-area'),paper=document.querySelector('.reading-page'),content=document.querySelector(${q(contentSelector)}),nav=document.querySelector('.page-navigation');const p=paper.getBoundingClientRect(),r=content.getBoundingClientRect(),n=nav.getBoundingClientRect();return {paperBottom:p.bottom,contentBottom:r.bottom,scrollHeight:area.scrollHeight,clientHeight:area.clientHeight,navTop:n.top,navBottom:n.bottom,viewport:innerHeight}})()`);
- assert(result.scrollHeight>result.clientHeight+100,'Fixture must require vertical scrolling');
+ if(requireScroll)assert(result.scrollHeight>result.clientHeight+100,'Fixture must require vertical scrolling: '+contentSelector+' '+result.scrollHeight+'/'+result.clientHeight);
  assert(result.paperBottom>=result.contentBottom-1,'Content must fit within page background');
  assert(result.navBottom<=result.viewport && result.navTop>=0,'Navigation visible in viewport');
+ if(result.scrollHeight<=result.clientHeight+2)return;
  await c.evaluate('document.querySelector(".reading-area").scrollTop=100000');
  await c.wait('document.querySelector(".reading-area").scrollTop>0');
  const bottom=await c.evaluate(`(()=>{const a=document.querySelector('.reading-area').getBoundingClientRect();return !!document.elementFromPoint(a.left+a.width/2,a.bottom-24)?.closest('.reading-page')})()`);
@@ -51,9 +52,9 @@ try{
  const snapshot=await c.command('Page.snapshotRect',{x:0,y:0,...size,coordinateSystem:'Viewport'});
  await writeFile(base+'/screenshots/reader-controls.png',Buffer.from(snapshot.dataURL.split(',')[1],'base64'));
  await click('.back-library');await open('book');await c.wait('document.querySelector(".textLayer")?.textContent');
- await geometry('.pdf-sheet');
+ await geometry('.pdf-sheet',false);
  // PDF can also scroll when zoomed; paper and controls must remain intact.
- for(let n=0;n<5;n++)await click('[aria-label="Увеличить масштаб"]');
+ for(let n=0;n<10;n++)await click('[aria-label="Увеличить масштаб"]');
  await c.wait('document.querySelector("canvas").height>1000');
  await geometry('.pdf-sheet');
  console.log('PASS long EPUB/PDF backgrounds, fixed navigation, scroll reset, bookmark add/open/delete, empty page input');

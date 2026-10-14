@@ -1,6 +1,7 @@
 <script lang="ts">
   import Brand from "./Brand.svelte";
   import Icon from "./Icon.svelte";
+  import ChoiceMenu from "./ChoiceMenu.svelte";
   import BookCollection from "./BookCollection.svelte";
   import { formatSize, type Book } from "./ui";
   export let books: Book[] = [];
@@ -196,13 +197,7 @@
             <span
               >{filtered.length}
               {filtered.length === 1 ? "книга" : "книг"}</span
-            ><span>·</span><select
-              bind:value={sort}
-              aria-label="Сортировка книг"
-              ><option value="recent">по последнему чтению</option><option
-                value="title">по названию</option
-              ><option value="author">по автору</option></select
-            >
+            ><span>·</span><ChoiceMenu id="book-sort" label="Сортировка книг" compact value={sort} options={[{value:"recent",label:"По последнему чтению"},{value:"title",label:"По названию"},{value:"author",label:"По автору"}]} onchange={value => (sort = String(value))} />
           </div>
         </div>
         <div class="view-switch" role="group" aria-label="Вид библиотеки">
@@ -478,15 +473,6 @@
     color: var(--muted);
     font-size: 11px;
   }
-  .subtitle select {
-    width: auto;
-    background: none;
-    padding: 0;
-    border: 0;
-    font-size: 11px;
-    color: var(--muted);
-    outline-offset: 2px;
-  }
   .view-switch {
     display: flex;
     gap: 6px;
@@ -650,9 +636,6 @@
       gap: 6px;
     }
     .subtitle {
-      font-size: 10px;
-    }
-    .subtitle select {
       font-size: 10px;
     }
   }
