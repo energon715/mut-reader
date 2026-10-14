@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"mut/internal/storage"
 )
 
@@ -113,9 +114,14 @@ func CreateBackup(vaultPath, directoryPath string) (*Manifest, error) {
 		if len(manifest.Files) >= 100000 {
 			return errors.New("backup file count limit exceeded")
 		}
-		input, err := root.Open(path)
+		input, err := root.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
 			return err
+		}
+		info, statErr := input.Stat()
+		if statErr != nil || !info.Mode().IsRegular() {
+			input.Close()
+			return errors.New("backup source is not a regular file")
 		}
 		defer input.Close()
 		hash, err := copyReader(input, filepath.Join(stage, filepath.FromSlash(path)))
@@ -155,7 +161,7 @@ func CreateBackup(vaultPath, directoryPath string) (*Manifest, error) {
 	return manifest, nil
 }
 func readRoot(root *os.Root, path string, limit int64) ([]byte, error) {
-	f, err := root.Open(path)
+	f, err := root.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +212,7 @@ func verifyRoot(root *os.Root) (*Manifest, error) {
 		return nil, err
 	}
 	for path, expected := range m.Files {
-		f, err := root.Open(path)
+		f, err := root.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -273,7 +279,7 @@ func RestoreValidated(path, target string, validate func(string) error) error {
 		return err
 	}
 	for rel, expected := range m.Files {
-		f, err := root.Open(rel)
+		f, err := root.OpenFile(rel, os.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
 			return err
 		}

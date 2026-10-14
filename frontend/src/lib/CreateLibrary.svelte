@@ -100,7 +100,7 @@
                 bind:value={password}
                 type={visible ? "text" : "password"}
                 required
-                autocomplete="new-password"
+                autocomplete="off"
               /><button
                 type="button"
                 aria-pressed={visible}
@@ -114,7 +114,7 @@
               bind:value={confirm}
               type={visible ? "text" : "password"}
               required
-              autocomplete="new-password"
+              autocomplete="off"
             />{#if confirm && password !== confirm}<small class="mismatch"
                 >Пароли не совпадают</small
               >{/if}</label

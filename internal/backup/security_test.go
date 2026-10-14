@@ -2,9 +2,11 @@ package backup
 
 import (
 	"encoding/json"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRestoreDoesNotOverwrite(t *testing.T) {
@@ -66,5 +68,34 @@ func TestBackupCannotBeInsideVault(t *testing.T) {
 	source, _, _, _ := setupTestVault(t)
 	if _, err := CreateBackup(source, filepath.Join(source, "backup")); err == nil {
 		t.Fatal("recursive backup accepted")
+	}
+}
+
+func TestVerifyRejectsFIFOWithoutWaiting(t *testing.T) {
+	source, _, _, _ := setupTestVault(t)
+	copy := filepath.Join(t.TempDir(), "copy")
+	if _, err := CreateBackup(source, copy); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(copy, "HEAD")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- VerifyBackup(copy) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("FIFO accepted")
+		}
+	case <-time.After(time.Second):
+		f, _ := os.OpenFile(path, os.O_WRONLY|unix.O_NONBLOCK, 0)
+		if f != nil {
+			f.Close()
+		}
+		t.Fatal("backup verification blocked on FIFO")
 	}
 }

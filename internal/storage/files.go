@@ -16,7 +16,7 @@ const MaxObjectBytes int64 = 256 << 20
 const MaxCatalogBytes int64 = 64 << 20
 
 func ReadFile(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

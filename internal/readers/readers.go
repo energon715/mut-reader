@@ -122,6 +122,8 @@ func parseEPUB(data []byte) (Document, error) {
 		}
 		files[f.Name] = f
 	}
+	budget := &contentBudget{}
+	readBytes := 0
 	read := func(name string) ([]byte, error) {
 		f := files[name]
 		if f == nil {
@@ -135,6 +137,10 @@ func parseEPUB(data []byte) (Document, error) {
 		b, err := io.ReadAll(io.LimitReader(r, MaxEntryBytes+1))
 		if len(b) > MaxEntryBytes {
 			return nil, errors.New("EPUB entry too large")
+		}
+		readBytes += len(b)
+		if readBytes > MaxExpandedBytes {
+			return nil, errors.New("repeated EPUB resource read limit exceeded")
 		}
 		return b, err
 	}
@@ -176,6 +182,9 @@ func parseEPUB(data []byte) (Document, error) {
 	if err := DecodeXML(opf, &pkg); err != nil {
 		return doc, err
 	}
+	if len(pkg.Spine) > 4096 {
+		return doc, errors.New("too many EPUB spine entries")
+	}
 	manifest := map[string]item{}
 	coverID := ""
 	for _, m := range pkg.Meta {
@@ -193,6 +202,7 @@ func parseEPUB(data []byte) (Document, error) {
 			}
 		}
 	}
+	imageCache := map[string]string{}
 	blocks := 0
 	for _, ref := range pkg.Spine {
 		item, ok := manifest[ref.ID]
@@ -207,16 +217,25 @@ func parseEPUB(data []byte) (Document, error) {
 		if err != nil {
 			return doc, err
 		}
-		chapter, err := htmlChapter(source, name, func(href string) string {
+		chapter, err := htmlChapter(source, name, budget, func(href string) string {
 			p, err := resolve(name, href)
 			if err != nil {
 				return ""
 			}
-			b, err := read(p)
-			if err != nil {
+			if files[p] == nil {
 				return ""
 			}
-			return imageURI(b)
+			if uri, ok := imageCache[p]; ok {
+				return uri
+			}
+			b, err := read(p)
+			if err != nil {
+				budget.err = err
+				return ""
+			}
+			uri := imageURI(b)
+			imageCache[p] = uri
+			return uri
 		})
 		if err != nil {
 			return doc, err
@@ -233,12 +252,15 @@ func parseEPUB(data []byte) (Document, error) {
 		}
 		doc.Chapters = append(doc.Chapters, chapter)
 	}
+	if !budget.take(len(doc.Cover)) {
+		return doc, budget.err
+	}
 	if len(doc.Chapters) == 0 {
 		return doc, errors.New("EPUB contains no readable chapters")
 	}
 	return doc, nil
 }
-func htmlChapter(source []byte, name string, img func(string) string) (Chapter, error) {
+func htmlChapter(source []byte, name string, budget *contentBudget, img func(string) string) (Chapter, error) {
 	chapter := Chapter{Blocks: []Block{}}
 	r, err := charset.NewReader(bytes.NewReader(source), "")
 	if err != nil {
@@ -255,8 +277,14 @@ func htmlChapter(source []byte, name string, img func(string) string) (Chapter, 
 		v := strings.Join(strings.Fields(text.String()), " ")
 		text.Reset()
 		if v != "" {
+			if !budget.block(len(v)) {
+				return
+			}
 			chapter.Blocks = append(chapter.Blocks, Block{Kind: kind, Text: v})
 			if chapter.Title == "" && (kind == "h1" || kind == "h2") {
+				if !budget.take(len(v)) {
+					return
+				}
 				chapter.Title = v
 			}
 		}
@@ -277,6 +305,12 @@ func htmlChapter(source []byte, name string, img func(string) string) (Chapter, 
 		return false
 	}
 	for {
+		if budget.err != nil {
+			return chapter, budget.err
+		}
+		if !budget.token() {
+			return chapter, budget.err
+		}
 		typ := tokens.Next()
 		count++
 		if count > 500000 || len(chapter.Blocks) > MaxBlocks {
@@ -288,7 +322,7 @@ func htmlChapter(source []byte, name string, img func(string) string) (Chapter, 
 				return chapter, tokens.Err()
 			}
 			flush()
-			return chapter, nil
+			return chapter, budget.err
 		case html.StartTagToken, html.SelfClosingTagToken:
 			t := tokens.Token()
 			if typ == html.StartTagToken && !voidTag(t.Data) {
@@ -329,6 +363,9 @@ func htmlChapter(source []byte, name string, img func(string) string) (Chapter, 
 				for _, a := range t.Attr {
 					if a.Key == "src" {
 						if uri := img(a.Val); uri != "" {
+							if !budget.block(len(uri)) {
+								return chapter, budget.err
+							}
 							chapter.Blocks = append(chapter.Blocks, Block{Kind: "image", Image: uri})
 						}
 					}
@@ -363,17 +400,26 @@ func parseFB2(data []byte) (Document, error) {
 	images := map[string]string{}
 	body := 0
 	depth := 0
-	blocks := 0
+	budget := &contentBudget{}
 	inTitle := false
 	coverID := ""
 	inCover := false
 	flushChapter := func() {
 		if len(chapter.Blocks) > 0 {
+			if !budget.take(len(chapter.Title)) {
+				return
+			}
 			doc.Chapters = append(doc.Chapters, chapter)
 			chapter = Chapter{Title: fmt.Sprintf("Глава %d", len(doc.Chapters)+1), Blocks: []Block{}}
 		}
 	}
 	for {
+		if budget.err != nil {
+			return doc, budget.err
+		}
+		if !budget.token() {
+			return doc, budget.err
+		}
 		token, err := d.Token()
 		if err == io.EOF {
 			break
@@ -402,6 +448,9 @@ func parseFB2(data []byte) (Document, error) {
 							coverID = id
 						}
 						if body > 0 {
+							if !budget.block(len(id)) {
+								return doc, budget.err
+							}
 							chapter.Blocks = append(chapter.Blocks, Block{Kind: "image", Image: id})
 						}
 					}
@@ -413,8 +462,8 @@ func parseFB2(data []byte) (Document, error) {
 						id = a.Value
 					}
 				}
-				var value string
-				if err := d.DecodeElement(&value, &t); err != nil {
+				value, err := xmlText(d, t, depth, budget)
+				if err != nil {
 					return doc, err
 				}
 				depth--
@@ -433,7 +482,7 @@ func parseFB2(data []byte) (Document, error) {
 				}
 			case "p", "subtitle", "text-author", "v":
 				if body > 0 {
-					v, err := xmlText(d, t)
+					v, err := xmlText(d, t, depth, budget)
 					if err != nil {
 						return doc, err
 					}
@@ -445,11 +494,10 @@ func parseFB2(data []byte) (Document, error) {
 							chapter.Title = v
 							kind = "h2"
 						}
-						chapter.Blocks = append(chapter.Blocks, Block{Kind: kind, Text: v})
-						blocks++
-						if blocks > MaxBlocks {
-							return doc, errors.New("too many FB2 blocks")
+						if !budget.block(len(v)) {
+							return doc, budget.err
 						}
+						chapter.Blocks = append(chapter.Blocks, Block{Kind: kind, Text: v})
 					}
 				}
 			}
@@ -466,11 +514,21 @@ func parseFB2(data []byte) (Document, error) {
 		}
 	}
 	flushChapter()
+	if budget.err != nil {
+		return doc, budget.err
+	}
+	if !budget.take(len(images[coverID])) {
+		return doc, budget.err
+	}
 	for i := range doc.Chapters {
 		for j := range doc.Chapters[i].Blocks {
 			b := &doc.Chapters[i].Blocks[j]
 			if b.Kind == "image" {
-				b.Image = images[b.Image]
+				uri := images[b.Image]
+				if len(uri) > len(b.Image) && !budget.take(len(uri)-len(b.Image)) {
+					return doc, budget.err
+				}
+				b.Image = uri
 			}
 		}
 	}
@@ -480,10 +538,13 @@ func parseFB2(data []byte) (Document, error) {
 	}
 	return doc, nil
 }
-func xmlText(d *xml.Decoder, start xml.StartElement) (string, error) {
+func xmlText(d *xml.Decoder, start xml.StartElement, outerDepth int, budget *contentBudget) (string, error) {
 	var out strings.Builder
 	depth := 1
 	for depth > 0 {
+		if !budget.token() {
+			return "", budget.err
+		}
 		token, err := d.Token()
 		if err != nil {
 			return "", err
@@ -491,7 +552,7 @@ func xmlText(d *xml.Decoder, start xml.StartElement) (string, error) {
 		switch t := token.(type) {
 		case xml.StartElement:
 			depth++
-			if depth > 128 {
+			if depth+outerDepth-1 > 128 {
 				return "", errors.New("XML depth limit exceeded")
 			}
 		case xml.EndElement:

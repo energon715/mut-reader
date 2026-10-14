@@ -12,6 +12,7 @@ assert set(members)=={'debian-binary','control.tar.gz','data.tar.gz'}
 assert members['debian-binary']==b'2.0\n'
 with tarfile.open(fileobj=io.BytesIO(members['control.tar.gz']),mode='r:gz') as t:
  control=t.extractfile('./control').read().decode();assert 'Package: mut\n' in control and 'Architecture: amd64\n' in control
+ assert 'libwebkit2gtk-4.1-0 (>= 2.54.0)' in control
 sources=[io.BytesIO(members['data.tar.gz']),io.BytesIO((out/f'mut-{version}-linux-amd64.tar.gz').read_bytes())]
 for source in sources:
  with tarfile.open(fileobj=source,mode='r:gz') as t:

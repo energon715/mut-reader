@@ -17,6 +17,7 @@ jobs:
       - run: npm ci && npm run check && npm run build && npm audit --audit-level=high
         working-directory: frontend
       - run: go vet -tags webkit2_41 ./... && go test -race -tags webkit2_41 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags webkit2_41 ./...
       - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
       - run: wails generate module -tags webkit2_41 && wails build -tags webkit2_41 -skipbindings -o mut
       - run: go build -trimpath -o build/bin/vaultctl ./cmd/vaultctl

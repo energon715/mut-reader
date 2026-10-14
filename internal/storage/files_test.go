@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,5 +70,27 @@ func TestAtomicWriteProcessCrash(t *testing.T) {
 		if !bytes.Equal(data, old) && !bytes.Equal(data, next) {
 			t.Fatal("partial commit after process crash")
 		}
+	}
+}
+
+func TestReadFileRejectsFIFOWithoutWaitingForWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "book.fb2")
+	if err := unix.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := ReadFile(path, 1024); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("FIFO accepted")
+		}
+	case <-time.After(time.Second):
+		// Release an accidentally blocked reader before failing the test.
+		f, _ := os.OpenFile(path, os.O_WRONLY|unix.O_NONBLOCK, 0)
+		if f != nil {
+			f.Close()
+		}
+		t.Fatal("opening FIFO blocked")
 	}
 }

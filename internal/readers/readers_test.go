@@ -3,6 +3,7 @@ package readers
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -84,4 +85,73 @@ func FuzzEPUB(f *testing.F) {
 		}
 		_, _ = Parse("EPUB", data)
 	})
+}
+
+func TestRepeatedSpineModelLimit(t *testing.T) {
+	var out bytes.Buffer
+	z := zip.NewWriter(&out)
+	files := map[string]string{
+		"META-INF/container.xml": `<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>`,
+		"book.opf":               `<package><manifest><item id="c" href="c.xhtml"/></manifest><spine>` + strings.Repeat(`<itemref idref="c"/>`, 100) + `</spine></package>`,
+		"c.xhtml":                "<html><body><p>" + strings.Repeat("x", 1<<20) + "</p></body></html>",
+	}
+	for name, data := range files {
+		f, err := z.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse("EPUB", out.Bytes()); err == nil || !strings.Contains(err.Error(), "model limit") {
+		t.Fatalf("repeated chapter not bounded: %v", err)
+	}
+}
+
+func TestRepeatedImagesModelLimit(t *testing.T) {
+	// A tiny valid raster followed by ignored trailing data keeps ZIP/input small,
+	// but its Base64 representation repeated in the bridge model must be bounded.
+	pngBytes, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pngBytes = append(pngBytes, bytes.Repeat([]byte{0}, 1<<20)...)
+	var out bytes.Buffer
+	z := zip.NewWriter(&out)
+	for name, data := range map[string][]byte{
+		"META-INF/container.xml": []byte(`<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>`),
+		"book.opf":               []byte(`<package><manifest><item id="c" href="c.xhtml"/></manifest><spine><itemref idref="c"/></spine></package>`),
+		"c.xhtml":                []byte("<html><body><p>Image fixture</p>" + strings.Repeat(`<img src="image.png"/>`, 40) + "</body></html>"),
+		"image.png":              pngBytes,
+	} {
+		f, err := z.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse("EPUB", out.Bytes()); err == nil || !strings.Contains(err.Error(), "model limit") {
+		t.Fatalf("repeated image not bounded: %v", err)
+	}
+	fb2 := `<FictionBook><body><p>Fixture</p>` + strings.Repeat(`<image href="#img"/>`, 40) + `</body><binary id="img">` + base64.StdEncoding.EncodeToString(pngBytes) + `</binary></FictionBook>`
+	if _, err := Parse("FB2", []byte(fb2)); err == nil || !strings.Contains(err.Error(), "model limit") {
+		t.Fatalf("FB2 repeated image not bounded: %v", err)
+	}
+}
+
+func TestFB2BinaryLimits(t *testing.T) {
+	for _, binary := range []string{strings.Repeat("<nested>", 129) + "AA==" + strings.Repeat("</nested>", 129), `<!DOCTYPE x>AA==`} {
+		if _, err := Parse("FB2", []byte(`<FictionBook><body><p>Fixture</p></body><binary id="img">`+binary+`</binary></FictionBook>`)); err == nil {
+			t.Fatal("binary bypassed XML limits")
+		}
+	}
 }
