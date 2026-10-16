@@ -9,11 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mut/internal/catalog"
+	"mut/internal/readers"
 	"mut/internal/vault"
 	"path/filepath"
 	"strings"
+	"time"
 	"uuid"
 )
 
@@ -50,13 +51,14 @@ var ErrDuplicateBook = errors.New("book already exists")
 func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte, keepDuplicate bool) error {
 	sum := sha256.Sum256(data)
 	sha256 := hex.EncodeToString(sum[:])
-	book, _, err := c.FindByHash(sha256)
+	book, found, err := c.FindByHash(sha256)
 	if err != nil {
 		return fmt.Errorf("find by hash error: %v", err)
 	}
-	if book.ID != uuid.Nil() && !keepDuplicate {
+	if found && !keepDuplicate {
 		return ErrDuplicateBook
 	}
+	book = catalog.Book{Title: book.Title, Author: book.Author, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	objectID, err := v.PutObject(data)
 	if err != nil {
 		return fmt.Errorf("cannot save object error: %w", err)
@@ -71,7 +73,7 @@ func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte
 	if book.Format == "FB2" {
 		title, authorname, err := ParseFB2(data)
 		if err != nil {
-			log.Printf("cannot parse fb2 error: %v", err)
+			_ = err
 		}
 		if book.Title == "" {
 			book.Title = title
@@ -82,7 +84,7 @@ func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte
 	} else if book.Format == "EPUB" {
 		title, authorname, err := ParseEPUB(data)
 		if err != nil {
-			log.Printf("cannot parse epub error: %v", err)
+			_ = err
 		}
 		if book.Title == "" {
 			book.Title = title
@@ -93,7 +95,7 @@ func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte
 	} else if book.Format == "PDF" {
 		title, authorname, err := ParsePDF(data)
 		if err != nil {
-			log.Printf("cannot parse pdf error: %v", err)
+			_ = err
 		}
 		if book.Title == "" {
 			book.Title = title
@@ -105,13 +107,18 @@ func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte
 		book.Title = filename
 		book.Author = "Unknown author"
 	}
-	err = c.AddBook(book)
-	if err != nil {
-		return fmt.Errorf("cannot add book error: %w", err)
+	if book.Title == "" {
+		book.Title = strings.TrimSuffix(filename, filepath.Ext(filename))
 	}
-	_, err = c.Save()
-	if err != nil {
-		return fmt.Errorf("cannot save catalog error: %w", err)
+	if (book.Format == "EPUB" || book.Format == "FB2") && len(data) <= readers.MaxBookBytes {
+		if doc, e := readers.Parse(book.Format, data); e == nil && doc.Cover != "" {
+			if coverID, e := v.PutObject([]byte(doc.Cover)); e == nil {
+				book.CoverObjectID = coverID
+			}
+		}
+	}
+	if err := c.Mutate(func() error { return c.AddBook(book) }); err != nil {
+		return fmt.Errorf("cannot commit imported book: %w", err)
 	}
 
 	return nil
@@ -120,7 +127,7 @@ func ImportFile(filename string, v *vault.Vault, c *catalog.Catalog, data []byte
 
 func ParseFB2(data []byte) (title string, author string, err error) {
 	var fb2 fb2book
-	err = xml.Unmarshal(data, &fb2)
+	err = readers.DecodeXML(data, &fb2)
 	if err != nil {
 		return "", "", fmt.Errorf("cannot unmarshal fb2 error: %w", err)
 	}
@@ -175,7 +182,7 @@ func ParseEPUB(data []byte) (title string, author string, err error) {
 			}
 
 			var container epubContainer
-			err = xml.Unmarshal(content, &container)
+			err = readers.DecodeXML(content, &container)
 			if err != nil {
 				return "", "", fmt.Errorf("cannot unmarshal container.xml error: %v", err)
 			}
@@ -194,7 +201,7 @@ func ParseEPUB(data []byte) (title string, author string, err error) {
 					}
 
 					var opf opfPackage
-					err = xml.Unmarshal(content, &opf)
+					err = readers.DecodeXML(content, &opf)
 					if err != nil {
 						return "", "", fmt.Errorf("cannot unmarshal opf error: %v", err)
 					}
@@ -229,7 +236,7 @@ func ParsePDF(data []byte) (title string, author string, err error) {
 		metadata := data[startIDX : endIDX+len("</x:xmpmeta>")]
 
 		var pdfxmp pdfXMP
-		if err := xml.Unmarshal(metadata, &pdfxmp); err == nil {
+		if err := readers.DecodeXML(metadata, &pdfxmp); err == nil {
 			title = strings.TrimSpace(pdfxmp.Title)
 			author = strings.TrimSpace(pdfxmp.Author)
 		}

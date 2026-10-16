@@ -3,6 +3,7 @@ package vault
 import (
 	"errors"
 	"fmt"
+	"mut/internal/storage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,9 @@ import (
 var ErrNoSnapshot = errors.New("cannot find snapshot")
 
 func (v *Vault) SaveSnapshot(data []byte) (snapshotID string, err error) {
+	if int64(len(data)) > storage.MaxCatalogBytes {
+		return "", fmt.Errorf("catalog too large")
+	}
 	if v.isLocked {
 		return "", ErrVaultLocked
 	}
@@ -30,28 +34,22 @@ func (v *Vault) SaveSnapshot(data []byte) (snapshotID string, err error) {
 	payload := append(nonce, ciphertext...)
 
 	headPath := filepath.Join(v.path, "HEAD")
-	tmpHeadPath := filepath.Join(v.path, "HEAD.tmp")
 
 	dir := filepath.Join(v.path, "snapshots")
-	err = os.MkdirAll(dir, 0700)
+	err = storage.EnsureDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("make directory error: %v", err)
 	}
 
 	snapshotpath := filepath.Join(dir, snapshotID)
-	err = os.WriteFile(snapshotpath, payload, 0600)
+	err = storage.AtomicWrite(snapshotpath, payload, false)
 	if err != nil {
 		return "", fmt.Errorf("write snapshot error: %v", err)
 	}
 
-	err = os.WriteFile(tmpHeadPath, []byte(snapshotID+"\n"), 0600)
+	err = storage.AtomicWrite(headPath, []byte(snapshotID+"\n"), true)
 	if err != nil {
-		return "", fmt.Errorf("write snapshotID into tmp file error: %v", err)
-	}
-
-	err = os.Rename(tmpHeadPath, headPath)
-	if err != nil {
-		return "", fmt.Errorf("atomic rename HEAD error: %v", err)
+		return "", fmt.Errorf("commit HEAD: %w", err)
 	}
 
 	return snapshotID, nil
@@ -59,14 +57,14 @@ func (v *Vault) SaveSnapshot(data []byte) (snapshotID string, err error) {
 }
 
 func (v *Vault) GetSnapshot(snapshotID string) ([]byte, error) {
-	if len(snapshotID) < 2 {
+	if !storage.ValidID(snapshotID) {
 		return nil, fmt.Errorf("lenght of snapshotID less than 2")
 	}
 	if v.isLocked {
 		return nil, ErrVaultLocked
 	}
 	snapshotPath := filepath.Join(v.path, "snapshots", snapshotID)
-	payload, err := os.ReadFile(snapshotPath)
+	payload, err := storage.ReadFile(snapshotPath, storage.MaxCatalogBytes+40)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read snapshot file: %v", err)
 	}
@@ -102,7 +100,7 @@ func (v *Vault) GetHead() (string, error) {
 	if v.isLocked {
 		return "", ErrVaultLocked
 	}
-	head, err := os.ReadFile(filepath.Join(v.path, "HEAD"))
+	head, err := storage.ReadFile(filepath.Join(v.path, "HEAD"), 128)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", ErrNoSnapshot
@@ -112,6 +110,9 @@ func (v *Vault) GetHead() (string, error) {
 	snapshotID := strings.TrimSpace(string(head))
 	if snapshotID == "" {
 		return "", ErrNoSnapshot
+	}
+	if !storage.ValidID(snapshotID) {
+		return "", fmt.Errorf("invalid snapshot ID")
 	}
 	return snapshotID, nil
 }

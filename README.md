@@ -1,95 +1,91 @@
 # mut
 
-**A personal library. A quiet place to read. An archive you own.**
+Локальная зашифрованная библиотека для Linux. PDF, EPUB и FB2 читаются внутри
+приложения; файлы других форматов сохраняются и экспортируются в оригинале.
+Без аккаунта, телеметрии и загрузки ресурсов книг из сети.
 
-mut is a Linux desktop reader being built around a simple idea: your books should stay with you. Keep your collection in a local encrypted archive, organize it into shelves, and pick up where you left off. Backups, exports, and transfers happen on your terms.
+Текущая версия: **1.0.0-rc.1**. Реализованы читалки, полки, обложки, поиск,
+позиции и закладки, автоблокировка, смена пароля, резервирование и проверяемое
+восстановление. До публичной 1.0 остаются независимое ревью безопасности
+и проверка поставки на других системах: [состояние выпуска](docs/RELEASE.md).
 
-> Your library remains yours.
+## Запуск
 
-Designed to work offline, without accounts or telemetry. Built first for the author and a small circle of friends, with careful attention to reading, data ownership, and long-term recovery.
+Готовые пакеты находятся в `dist/`: **AppImage для Linux x86-64** и **DEB**.
+AppImage включает GTK/WebKit и требует glibc >= 2.39; DEB требует системный
+WebKitGTK >= 2.54.0. [Установка, сборка и публикация](docs/LINUX_PACKAGES.md).
+Проверены Arch и runtime в Ubuntu 24.04 (X11); установка DEB — в Debian 13.
 
-## Project status
+При создании выберите новую папку, например `~/.local/share/mut/vault`
+(в поле вводится полный абсолютный путь). Запишите полный код восстановления
+отдельно от архива. Последние шесть символов нужны только для подтверждения
+записи кода; при входе и восстановлении нужен весь код.
 
-mut is an early prototype. This repository currently contains the project specifications and a Go vault package with code for creating, unlocking, and locking a vault, storing encrypted objects, and reading them back, alongside tests.
+«Добавить» открывает импорт файлов или папки. Карточка книги содержит полки,
+экспорт оригинала и удаление из каталога. Позиции и закладки сохраняются
+в зашифрованном каталоге. После закрытия приложение запоминает выбранные папки,
+но запрашивает секрет снова. [Инструкция восстановления](docs/RECOVERY.md).
 
-An Android Flutter implementation lives in [`mobile/`](mobile/README.md), with its own [architecture](mobile/docs/ARCHITECTURE.md) and UI based on the Paper mobile layouts. It includes encrypted storage, readers, shelves and backup/restore; its prototype limits and validation are documented there.
+## Сборка из исходников
 
-The desktop interface, book catalog, reading adapters, backups, and recovery CLI are planned. The features below describe the intended first release. The archive format is still under development; recovery testing and independent security review are required before a public release with data protection claims.
-
-## The first release
-
-- **Keep the whole collection.** Import files of any format. Read PDF, EPUB, and FB2 inside mut; keep other formats in the archive and export them for an external viewer.
-- **Find your next book.** Shelves, covers, title and author search, and filters for books in progress or finished.
-- **Read comfortably.** A calm reading view with a table of contents, bookmarks, saved positions, keyboard navigation, and light and dark themes. Adjustable text for EPUB and FB2; page zoom for PDF.
-- **Lock the library.** Book contents, titles, covers, notes, and reading progress are intended to remain encrypted on disk when the vault is locked.
-- **Make a copy you can trust.** Encrypted backups, integrity reports, and restoration on a clean machine. A standalone `vaultctl` utility is planned for verification and recovery without the desktop app.
-- **Take your originals with you.** Export the files you imported, without tying them to the library's internal format.
-
-Storage and reading are separate: a missing reading adapter should never prevent a file from being preserved.
-
-## Under the hood
-
-The planned architecture keeps the desktop interface separate from the storage core. The application and recovery CLI will share the same Go packages.
-
-```mermaid
-flowchart TD
-    UI["Svelte · TypeScript · Vite"] --> Bridge["Wails v2"]
-    Bridge --> Core["Go: catalog and workflows"]
-    Core --> Vault["Encrypted archive"]
-    Core --> Readers["PDF · EPUB · FB2"]
-    Core --> Backup["Backup and recovery"]
-    CLI["vaultctl"] --> Vault
-    CLI --> Backup
-```
-
-The vault prototype uses **Argon2id** and **XChaCha20-Poly1305** from `golang.org/x/crypto`, with **HKDF** for object keys. The storage design calls for encrypted content and metadata, an in-memory search index after unlocking, and catalog snapshots committed through an atomic `HEAD` update.
-
-The planned reading engines are PDF.js, epub.js as the EPUB candidate, and a streaming FB2 parser written in Go. Interface assets and reader resources will ship with the application; book scripts and external requests are to be disabled.
-
-See the [architecture](docs/ARCHITECTURE.md) and [security model](docs/SECURITY.md) for the design, boundaries, and review requirements.
-
-## Documentation
-
-The detailed specifications are written in Russian.
-
-| Document | Contents |
-| --- | --- |
-| [Project brief](docs/Bookreader.md) | The idea, core decisions, and scope of the first release |
-| [Product and interface](docs/PRODUCT.md) | User workflows, navigation, and visual design |
-| [Architecture](docs/ARCHITECTURE.md) | Stack, component boundaries, archive design, and contracts |
-| [Security](docs/SECURITY.md) | Threat model, key handling, and required checks |
-| [Roadmap](docs/ROADMAP.md) | Milestones from prototype to beta and acceptance criteria |
-
-Start with the project brief, then follow the product, architecture, security, and roadmap documents.
-
-## Repository
-
-```text
-.
-├── docs/              # project decisions and specifications
-├── internal/vault/    # encrypted storage prototype and tests
-├── mobile/            # Flutter Android app, architecture and tests
-├── pictures/          # project artwork
-├── references/        # visual references
-├── go.mod
-├── go.sum
-└── README.md
-```
-
-The Go version declared in `go.mod` is **1.27.1**. To run the core tests:
+Для готовых пакетов в отдельной Debian-среде:
 
 ```sh
-go test ./...
+python3 scripts/build-linux-release.py
 ```
 
-Desktop setup instructions will be added with the Wails application and frontend scaffold.
+Требования к rootless-среде описаны в [инструкции пакетов](docs/LINUX_PACKAGES.md).
+Для сборки под библиотеки своей системы:
 
-## What's next
+Go 1.27.2, Node.js 24+, npm, Python 3 и заголовки GTK 3/WebKitGTK 4.1.
 
-The first milestone is a complete, verifiable round trip: create a vault → store files → close and reopen → back up → restore into a new directory → compare the original bytes. The reading interface, shelves, and larger collections follow that foundation.
+```sh
+cd frontend
+npm ci
+npm run check
+npm run build
+cd ..
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+wails generate module -tags webkit2_41
+wails build -tags webkit2_41 -skipbindings -o mut
+go build -trimpath -o build/bin/vaultctl ./cmd/vaultctl
+python3 scripts/collect-licenses.py
+python3 scripts/package-linux.py
+```
 
-Later ideas include sharing book lists and personal notes, selected encrypted packages for specific recipients, and local search with citations. Their scope is documented separately in the roadmap.
+Проверки:
 
-## License
+```sh
+go vet -tags webkit2_41 ./...
+go test -race -tags webkit2_41 ./...
+```
 
-**MPL-2.0** is the proposed license. A license file has not yet been added; the final choice and dependency licenses must be reviewed before the first public release.
+Для просмотра дизайна: `cd frontend && npm run dev`, затем `?preview=library`.
+Этот режим использует демонстрационные данные. Для работы с архивом запускайте
+Wails-приложение. Контракт моста: [frontend/BRIDGE.md](frontend/BRIDGE.md).
+
+## Ограничения
+
+Импорт одного оригинала — до 256 МиБ; встроенное чтение — до 64 МиБ.
+EPUB: до 4096 ZIP-записей, 8 МиБ на запись, 128 МиБ распакованного содержимого, включая повторные чтения. Модель EPUB/FB2
+ограничена 32 МиБ с учётом повторений изображений и текста.
+PDF с паролем пока не поддерживается. EPUB и FB2 преобразуются в ограниченную
+модель текста и растровых изображений: сложная вёрстка, ссылки и интерактивные
+элементы не воспроизводятся. PDF отображает страницы и слой выделения текста.
+
+На диске видны UUID, количество и размеры зашифрованных файлов, параметры KDF
+и факт существования архива. Содержимое `vault.json` не является секретом,
+но позволяет проверять догадки пароля офлайн. Используйте длинный пароль.
+Recovery-код даёт полный доступ. Блокировка очищает ключи Go и убирает данные
+из интерфейса; она не гарантирует стирание всех копий из памяти WebKit,
+подкачки, снимков экрана или заражённой ОС.
+
+Удаление книги убирает её из текущего каталога. Старые снимки и объекты пока
+не очищаются автоматически и входят в копии. Смена пароля не меняет пароль
+у ранее созданных копий. [Формат v1](spec/format-v1.md),
+[модель угроз](docs/SECURITY.md), [план 1.0](docs/V1_0_0_CHECKLIST.md).
+
+## Лицензия
+
+[MPL-2.0](LICENSE). PDF.js — Apache-2.0; Onest и Literata — SIL OFL 1.1.
+Пакеты включают тексты лицензий и списки версий зависимостей.

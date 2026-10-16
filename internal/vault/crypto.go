@@ -71,6 +71,9 @@ func decrypt(key []byte, nonce []byte, ciphertext []byte, additionalData []byte)
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get chacha20 AEAD: %v", err)
 	}
+	if len(nonce) != aead.NonceSize() || len(ciphertext) < aead.Overhead() {
+		return nil, fmt.Errorf("invalid encrypted payload")
+	}
 	plainText, err := aead.Open(nil, nonce, ciphertext, additionalData)
 	if err != nil {
 		return nil, fmt.Errorf("decryption error: %v", err)

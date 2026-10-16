@@ -3,7 +3,7 @@ package vault
 import (
 	"errors"
 	"fmt"
-	"os"
+	"mut/internal/storage"
 	"path/filepath"
 	"uuid"
 )
@@ -11,6 +11,9 @@ import (
 var ErrVaultLocked = errors.New("vault is locked")
 
 func (v *Vault) PutObject(data []byte) (objectID string, err error) {
+	if int64(len(data)) > storage.MaxObjectBytes {
+		return "", fmt.Errorf("object exceeds 256 MiB limit")
+	}
 	if v.isLocked {
 		return "", ErrVaultLocked
 	}
@@ -26,12 +29,12 @@ func (v *Vault) PutObject(data []byte) (objectID string, err error) {
 	}
 	payload := append(nonce, ciphertext...)
 	dir := filepath.Join(v.path, "objects", objectID[:2])
-	err = os.MkdirAll(dir, 0700)
+	err = storage.EnsureDir(dir)
 	if err != nil {
 		return "", fmt.Errorf("make directory error: %v", err)
 	}
 	objectpath := filepath.Join(dir, objectID)
-	err = os.WriteFile(objectpath, payload, 0600)
+	err = storage.AtomicWrite(objectpath, payload, false)
 	if err != nil {
 		return "", fmt.Errorf("make directory error: %v", err)
 	}
@@ -39,14 +42,14 @@ func (v *Vault) PutObject(data []byte) (objectID string, err error) {
 }
 
 func (v *Vault) GetObject(objectID string) ([]byte, error) {
-	if len(objectID) < 2 {
+	if !storage.ValidID(objectID) {
 		return nil, fmt.Errorf("lenght of objectID less than 2")
 	}
 	if v.isLocked {
 		return nil, ErrVaultLocked
 	}
 	objectPath := filepath.Join(v.path, "objects", objectID[:2], objectID)
-	payload, err := os.ReadFile(objectPath)
+	payload, err := storage.ReadFile(objectPath, storage.MaxObjectBytes+40)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read file: %v", err)
 	}

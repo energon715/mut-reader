@@ -2,16 +2,18 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
 	"mut/internal/backup"
 	"mut/internal/catalog"
 	"mut/internal/importer"
+	"mut/internal/storage"
 	"mut/internal/vault"
 )
 
@@ -85,9 +87,9 @@ Commands:
   backup   <vault-path> <backup-dir>           Create an encrypted backup of the vault
   verify   <backup-path>                       Verify file checksums in a backup manifest
   restore  <backup-path> <target-vault-path>   Restore a vault from an encrypted backup
-  check    <vault-path>                        Check vault access (password or recovery key)
+  check    <vault-path>                        Check all originals and covers [--password]
   export   <vault-path> <output-dir>           Export original unencrypted book files
-  purge    <vault-path>                        Cryptographically shred and delete the vault
+  purge    <vault-path>                        Delete the vault (does not guarantee secure erasure)
 
 Options:
   -h, --help   Show this help message
@@ -139,12 +141,24 @@ func runVerify(args []string) error {
 }
 
 func runRestore(args []string) error {
-	if len(args) != 2 {
-		return fmt.Errorf("usage: vaultctl restore <backup-path> <target-vault-path>")
+	if len(args) < 2 || len(args) > 3 || (len(args) == 3 && args[2] != "--password") {
+		return fmt.Errorf("usage: vaultctl restore <backup-path> <target-vault-path> [--password]")
 	}
 	backupPath := args[0]
 	targetPath := args[1]
-	err := backup.RestoreBackup(backupPath, targetPath)
+	password := len(args) == 3 && args[2] == "--password"
+	secret, err := readSecret(password)
+	if err != nil {
+		return err
+	}
+	err = backup.RestoreValidated(backupPath, targetPath, func(stage string) error {
+		v, err := openSecret(stage, secret, password)
+		if err != nil {
+			return err
+		}
+		defer v.Lock()
+		return catalog.Verify(v)
+	})
 	if err != nil {
 		return fmt.Errorf("restore backup error: %w", err)
 	}
@@ -155,47 +169,41 @@ func runRestore(args []string) error {
 }
 
 func runCheck(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: vaultctl check <vault-path> [--recovery]")
+	if len(args) < 1 || len(args) > 2 || (len(args) == 2 && args[1] != "--password" && args[1] != "--recovery") {
+		return fmt.Errorf("usage: vaultctl check <vault-path> [--password|--recovery]")
 	}
-
-	vaultPath := args[0]
-
-	var v *vault.Vault
-
-	recKey, err := readRecoveryKey()
+	password := len(args) == 2 && args[1] == "--password"
+	secret, err := readSecret(password)
 	if err != nil {
-		return fmt.Errorf("read recovery error: %w", err)
+		return err
 	}
-	v, err = vault.OpenVaultWithRecovery(vaultPath, recKey)
+	v, err := openSecret(args[0], secret, password)
 	if err != nil {
-		return fmt.Errorf("open vault with recovery error: %w", err)
+		return err
 	}
-
-	headID, _ := v.GetHead()
-
-	fmt.Println("  Access granted! Vault is valid.")
-	if headID != "" {
-		fmt.Printf("  Current Snapshot: %s\n", headID)
+	defer v.Lock()
+	if err := catalog.Verify(v); err != nil {
+		return err
 	}
+	fmt.Println("  Catalog, originals and covers verified.")
 	return nil
-
 }
 
 func runExport(args []string) error {
-	if len(args) != 2 {
-		return fmt.Errorf("usage: vaultctl export <vault-path> <output-dir>")
+	if len(args) < 2 || len(args) > 3 || (len(args) == 3 && args[2] != "--password") {
+		return fmt.Errorf("usage: vaultctl export <vault-path> <output-dir> [--password]")
 	}
 	vaultPath := args[0]
 	outputDir := args[1]
 
 	var v *vault.Vault
 
-	recoveryKey, err := readRecoveryKey()
+	password := len(args) == 3 && args[2] == "--password"
+	secret, err := readSecret(password)
 	if err != nil {
-		return fmt.Errorf("read recoveryKey error: %w", err)
+		return err
 	}
-	v, err = vault.OpenVaultWithRecovery(vaultPath, recoveryKey)
+	v, err = openSecret(vaultPath, secret, password)
 	if err != nil {
 		return fmt.Errorf("open vault with recovery key error: %w", err)
 	}
@@ -236,7 +244,7 @@ func runExport(args []string) error {
 		fileName := filepath.Base(book.Originalname)
 		if fileName == "" || fileName == "." || fileName == "/" {
 			ext := strings.ToLower(book.Format)
-			fileName = fmt.Sprintf("%s.%s", book.Title, ext)
+			fileName = book.ID.String() + "." + filepath.Base(ext)
 		}
 
 		targetPath := filepath.Join(outputDir, fileName)
@@ -248,7 +256,9 @@ func runExport(args []string) error {
 		}
 		usedNames[filepath.Base(book.Originalname)]++
 
-		if err := os.WriteFile(targetPath, data, 0644); err != nil {
+		err = storage.AtomicWrite(targetPath, data, false)
+		clear(data)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "  [%d/%d] ⚠️ Failed to write '%s': %v\n", i+1, len(books), fileName, err)
 			continue
 		}
@@ -258,6 +268,9 @@ func runExport(args []string) error {
 	}
 
 	fmt.Printf("\n  Export finished: %d of %d books exported successfully\n", exportedCount, len(books))
+	if exportedCount != len(books) {
+		return errors.New("some originals could not be exported; existing files were preserved")
+	}
 	return nil
 }
 
@@ -292,67 +305,34 @@ func runPurge(args []string) error {
 		return nil
 	}
 
-	fmt.Println("  Cryptographically shredding vault headers...")
-	err = shredFile(filepath.Join(vaultPath, "vault.json"))
-	if err != nil {
-		return fmt.Errorf("shred file error: %w", err)
-	}
-	err = shredFile(filepath.Join(vaultPath, "HEAD"))
-	if err != nil {
-		return fmt.Errorf("shred file error: %w", err)
-	}
-
-	_ = filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			err = shredFile(path)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-
 	err = os.RemoveAll(vaultPath)
 	if err != nil {
 		return fmt.Errorf("failed to remove vault directory: %w", err)
 	}
 
-	fmt.Println("  Vault has been permanently and irreversibly destroyed.")
+	fmt.Println("  Vault directory deleted. Copies, snapshots and storage remnants may still exist.")
 	return nil
 
 }
 
-func readRecoveryKey() (string, error) {
-	fmt.Print("Enter recovery key: ")
-	input, err := getLineFromStdin()
-	if err != nil {
-		return "", fmt.Errorf("failed to read recovery key: %w", err)
+func openSecret(path, secret string, password bool) (*vault.Vault, error) {
+	if password {
+		return vault.OpenVault(path, []byte(secret))
 	}
-	return strings.TrimSpace(input), nil
-
+	return vault.OpenVaultWithRecovery(path, secret)
 }
-
-func shredFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
+func readRecoveryKey() (string, error) { return readSecret(false) }
+func readSecret(password bool) (string, error) {
+	label := "recovery key"
+	if password {
+		label = "password"
 	}
-
-	file, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		return err
+	fmt.Print("Enter " + label + ": ")
+	if f, ok := inReader.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		data, err := term.ReadPassword(int(f.Fd()))
+		fmt.Println()
+		defer clear(data)
+		return string(data), err
 	}
-
-	defer file.Close()
-
-	randomData := make([]byte, info.Size())
-	_, _ = rand.Read(randomData)
-
-	_, err = file.Write(randomData)
-	if err != nil {
-		return err
-	}
-
-	_ = file.Sync()
-	return nil
+	return getLineFromStdin()
 }

@@ -1,0 +1,39 @@
+name: Linux x86-64 release packages
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rootless build tools
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap uidmap
+      - name: Allow user namespaces for the isolated build
+        # Ubuntu's AppArmor restriction otherwise blocks unprivileged bwrap.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Ensure subordinate UID/GID mappings on the temporary runner
+        run: |
+          release_user="$(id -un)"
+          if ! getsubids "$release_user" | grep -q .; then
+            sudo usermod --add-subuids 1000000-1065535 --add-subgids 1000000-1065535 "$release_user"
+          fi
+      - name: Match release tag to package version
+        if: github.ref_type == 'tag'
+        run: |
+          release_version="$(python3 -c 'import json; print(json.load(open("frontend/package.json"))["version"])')"
+          test "$GITHUB_REF_NAME" = "v$release_version"
+      - name: Build in Debian 13 (verified tool downloads)
+        run: python3 scripts/build-linux-release.py
+      - name: Check release checksums
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mut-linux-x86_64
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"mut/internal/vault"
 	"slices"
 	"strings"
@@ -60,6 +61,12 @@ func SnapshotFromBytes(data []byte) (*Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshall data: %w", err)
 	}
+	if snapshot.Version < 0 || snapshot.Version > 1 {
+		return nil, fmt.Errorf("unsupported catalog version")
+	}
+	if len(snapshot.Books) > 100000 || len(snapshot.Shelves) > 10000 {
+		return nil, fmt.Errorf("catalog limit exceeded")
+	}
 	if snapshot.Books == nil {
 		snapshot.Books = make(map[string]Book)
 	}
@@ -74,12 +81,13 @@ func Open(v *vault.Vault) (*Catalog, error) {
 	var snapshot *Snapshot
 	if err != nil {
 		if errors.Is(err, vault.ErrNoSnapshot) {
-			snapshot = &Snapshot{Version: 0, CreatedAt: time.Now(), Books: make(map[string]Book), Shelves: make([]string, 0)}
+			snapshot = &Snapshot{Version: 1, CreatedAt: time.Now(), Books: make(map[string]Book), Shelves: make([]string, 0)}
 		} else {
 			return nil, fmt.Errorf("cannot open catalog: %w", err)
 		}
 	} else {
 		snapshot, err = SnapshotFromBytes(lastSnapshot)
+		clear(lastSnapshot)
 		if err != nil {
 			return nil, fmt.Errorf("create snapshot from bytes error: %w", err)
 		}
@@ -138,6 +146,8 @@ func (c *Catalog) ListBooks() ([]Book, error) {
 	}
 	books := make([]Book, 0, len(c.Snapshot.Books))
 	for _, book := range c.Snapshot.Books {
+		book.Shelves = slices.Clone(book.Shelves)
+		book.Bookmarks = slices.Clone(book.Bookmarks)
 		books = append(books, book)
 	}
 	return books, nil
@@ -179,7 +189,7 @@ func (c *Catalog) ListShelves() ([]string, error) {
 	if c.Snapshot.Shelves == nil {
 		c.Snapshot.Shelves = make([]string, 0)
 	}
-	return c.Snapshot.Shelves, nil
+	return slices.Clone(c.Snapshot.Shelves), nil
 }
 
 func (c *Catalog) AddBookToShelf(bookID uuid.UUID, shelf string) error {
@@ -280,6 +290,8 @@ func (c *Catalog) Search(query string) []Book {
 	query = strings.ToLower(query)
 	for _, book := range c.Snapshot.Books {
 		if strings.Contains(strings.ToLower(book.Title), query) || strings.Contains(strings.ToLower(book.Author), query) {
+			book.Shelves = slices.Clone(book.Shelves)
+			book.Bookmarks = slices.Clone(book.Bookmarks)
 			books = append(books, book)
 		}
 	}
@@ -293,6 +305,8 @@ func (c *Catalog) ListBooksByShelf(shelf string) ([]Book, error) {
 	books := make([]Book, 0)
 	for _, book := range c.Snapshot.Books {
 		if slices.Contains(book.Shelves, shelf) {
+			book.Shelves = slices.Clone(book.Shelves)
+			book.Bookmarks = slices.Clone(book.Bookmarks)
 			books = append(books, book)
 		}
 	}
@@ -306,12 +320,69 @@ func (c *Catalog) ListBooksWithoutShelf() []Book {
 	books := make([]Book, 0)
 	for _, book := range c.Snapshot.Books {
 		if len(book.Shelves) == 0 {
+			book.Shelves = slices.Clone(book.Shelves)
+			book.Bookmarks = slices.Clone(book.Bookmarks)
 			books = append(books, book)
 		}
 	}
 	return books
 }
 
-// func (c *Catalog) ListBookByStatus() // TODO - implement this function
+func (c *Catalog) UpdateReadingPosition(bookID uuid.UUID, progress float64, locator string) error {
+	if math.IsNaN(progress) || math.IsInf(progress, 0) || progress < 0 || progress > 100 || len(locator) > 4096 {
+		return fmt.Errorf("invalid reading position")
+	}
+	book, err := c.GetBook(bookID)
+	if err != nil {
+		return err
+	}
+	book.Position = ReadingPosition{Progress: progress, Locator: locator, UpdateAt: time.Now().UTC()}
+	book.UpdatedAt = time.Now().UTC()
+	c.Snapshot.Books[bookID.String()] = book
+	return nil
+}
+func (c *Catalog) SetBookmarks(bookID uuid.UUID, bookmarks []string) error {
+	if len(bookmarks) > 1000 {
+		return fmt.Errorf("too many bookmarks")
+	}
+	for _, m := range bookmarks {
+		if len(m) > 4096 {
+			return fmt.Errorf("bookmark too long")
+		}
+	}
+	book, err := c.GetBook(bookID)
+	if err != nil {
+		return err
+	}
+	book.Bookmarks = slices.Clone(bookmarks)
+	book.UpdatedAt = time.Now().UTC()
+	c.Snapshot.Books[bookID.String()] = book
+	return nil
+}
 
-// func (c *Catalog) UpdateReadingPosition(bookID uuid.UUID, progress float64, locator string) error
+// Mutate rolls back the in-memory view when committing a catalog change fails.
+func (c *Catalog) Mutate(change func() error) error {
+	bytes, err := c.Snapshot.ToBytes()
+	if err != nil {
+		return err
+	}
+	old, err := SnapshotFromBytes(bytes)
+	if err != nil {
+		return err
+	}
+	if err := change(); err != nil {
+		c.Snapshot = old
+		return err
+	}
+	if _, err := c.Save(); err != nil {
+		// A directory fsync can fail after HEAD has already been replaced.
+		// Reconcile with the disk view instead of blindly restoring stale data.
+		if current, openErr := Open(c.Vault); openErr == nil {
+			c.Snapshot = current.Snapshot
+		} else {
+			c.Snapshot = old
+		}
+		return err
+	}
+	return nil
+}
