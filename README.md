@@ -9,6 +9,53 @@
 восстановление. До публичной 1.0 остаются независимое ревью безопасности
 и проверка поставки на других системах: [состояние выпуска](docs/RELEASE.md).
 
+## Скриншоты
+
+### Десктоп · Linux
+
+Библиотека с обложками, полками и сохранёнными позициями чтения. [Сборка и установка](docs/LINUX_PACKAGES.md).
+
+![mut для Linux — библиотека, обложки, полки и прогресс чтения](docs/screenshots/desktop/library.png)
+
+<table>
+  <tr>
+    <th>Чтение и закладки</th>
+    <th>Настройки текста</th>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/desktop/reader.png"><img src="docs/screenshots/desktop/reader.png" alt="Десктопная читалка с бумажным фоном, навигацией по главам и сохранённой закладкой" width="400"></a></td>
+    <td><a href="docs/screenshots/desktop/settings.png"><img src="docs/screenshots/desktop/settings.png" alt="Настройки чтения с открытым меню выбора размера шрифта" width="400"></a></td>
+  </tr>
+</table>
+
+<details>
+<summary>Светлая тема</summary>
+
+![mut для Linux — библиотека в светлой теме](docs/screenshots/desktop/library-light.png)
+
+</details>
+
+### Мобильная версия · Android
+
+Flutter-приложение находится в ветке [`app/mobile`](https://github.com/TheSlopHead/Kolibreum/tree/app/mobile). [Запуск и документация](https://github.com/TheSlopHead/Kolibreum/blob/app/mobile/mobile/README.md).
+
+<table>
+  <tr>
+    <th>Библиотека</th>
+    <th>О книге</th>
+    <th>Читалка</th>
+    <th>Оформление</th>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/mobile/library.png"><img src="docs/screenshots/mobile/library.png" alt="Android — библиотека с обложками, прогрессом чтения и нижней навигацией" width="190"></a></td>
+    <td><a href="docs/screenshots/mobile/book-details.png"><img src="docs/screenshots/mobile/book-details.png" alt="Android — сведения о книге, обложка и прогресс чтения" width="190"></a></td>
+    <td><a href="docs/screenshots/mobile/reader.png"><img src="docs/screenshots/mobile/reader.png" alt="Android — чтение русского текста на бумажном фоне" width="190"></a></td>
+    <td><a href="docs/screenshots/mobile/appearance.png"><img src="docs/screenshots/mobile/appearance.png" alt="Android — выбор режима чтения, цвета страницы, размера текста и интервала" width="190"></a></td>
+  </tr>
+</table>
+
+На снимках — демонстрационные книги. Десктопные экраны сняты в работающем Linux-приложении, мобильные взяты из галереи тестового Flutter UI. [Источники изображений](docs/screenshots/README.md).
+
 ## Запуск
 
 Готовые пакеты находятся в `dist/`: **AppImage для Linux x86-64** и **DEB**.
