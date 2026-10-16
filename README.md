@@ -37,7 +37,7 @@
 
 ### Мобильная версия · Android
 
-Flutter-приложение находится в ветке [`app/mobile`](https://github.com/TheSlopHead/Kolibreum/tree/app/mobile). [Запуск и документация](https://github.com/TheSlopHead/Kolibreum/blob/app/mobile/mobile/README.md).
+Flutter-приложение находится в ветке [`app/mobile`](https://github.com/energon715/mut-reader/tree/app/mobile). [Запуск и документация](https://github.com/energon715/mut-reader/blob/app/mobile/mobile/README.md).
 
 <table>
   <tr>
